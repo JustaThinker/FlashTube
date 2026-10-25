@@ -1,0 +1,538 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Skipii — double-tap to seek, two directions</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+@font-face{font-family:'App Rounded';src:local('SF Pro Rounded'),local('.SF NS Rounded'),local('SFProRounded-Regular');font-weight:100 1000}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+:root{
+  --font:'App Rounded',ui-rounded,Nunito,system-ui,-apple-system,sans-serif;
+  --ease-rise:cubic-bezier(.2,.9,.2,1);
+  --ease-spring:cubic-bezier(.34,1.56,.64,1);
+  --slow:1;
+  /* Skipii's YouTube theme, dark */
+  --primary:#FF0033;--surface:#0f0f0f;--on:#f1f1f1;--on-var:#aaaaaa;
+  --sc-low:#181818;--sc:#212121;--sc-high:#2c2c2c;
+}
+body{font-family:var(--font);background:#0a0a0a;color:var(--on);min-height:100vh}
+button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
+svg{display:block}
+
+/* ---------- page chrome ---------- */
+.page{max-width:1500px;margin:0 auto;padding:40px 28px 64px}
+.intro{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:24px;margin-bottom:34px}
+.intro h1{font-size:40px;font-weight:900;letter-spacing:-1.6px;line-height:1.05}
+.intro p{margin-top:10px;color:var(--on-var);font-size:16px;font-weight:600;max-width:680px;line-height:1.45}
+.intro p b{color:var(--on)}
+.controls{display:flex;flex-direction:column;gap:12px;align-items:flex-end}
+.seg{display:flex;background:var(--sc-high);border-radius:999px;padding:4px;gap:4px}
+.seg button{height:40px;padding:0 18px;border-radius:999px;font-weight:800;font-size:14px;color:var(--on-var);transition:background .35s var(--ease-rise),color .35s}
+.seg button.on{background:var(--primary);color:#fff}
+.demo{height:48px;padding:0 22px;border-radius:999px;background:var(--on);color:var(--surface);font-weight:900;font-size:15px;display:flex;align-items:center;gap:8px;transition:transform .42s var(--ease-spring),opacity .3s}
+.demo:active{transform:scale(.94);transition-duration:.09s}
+.demo[disabled]{opacity:.45;cursor:default}
+.demo svg{width:20px;height:20px}
+
+.stage{display:flex;flex-wrap:wrap;gap:40px;justify-content:center}
+.shot{display:flex;flex-direction:column;align-items:center;gap:16px}
+.cap{text-align:center;max-width:400px}
+.cap b{display:block;font-size:19px;font-weight:900;letter-spacing:-.3px}
+.cap b em{font-style:normal;color:var(--primary)}
+.cap small{display:block;margin-top:5px;font-size:13.5px;font-weight:600;color:var(--on-var);line-height:1.45}
+.phone{width:414px;height:868px;border-radius:58px;padding:12px;background:#1c1c1c;box-shadow:0 0 0 2px #2e2e2e inset,0 30px 70px -20px rgba(0,0,0,.7);position:relative;transition:width .5s var(--ease-rise),height .5s var(--ease-rise)}
+body.fs .phone{width:868px;height:414px}
+.screen{width:100%;height:100%;border-radius:46px;overflow:hidden;clip-path:inset(0 round 46px);position:relative;background:var(--surface);isolation:isolate}
+.screen:before{content:"";position:absolute;top:12px;left:50%;width:26px;height:26px;margin-left:-13px;border-radius:50%;background:#050505;z-index:80}
+body.fs .screen:before{top:50%;left:12px;margin:-13px 0 0}
+
+.notes{margin-top:56px;display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:14px}
+.note{background:var(--sc-low);border-radius:24px;padding:18px 20px}
+.note h3{font-size:12px;font-weight:900;letter-spacing:1.3px;color:var(--primary);text-transform:uppercase}
+.note p,.note li{margin-top:8px;font-size:14px;font-weight:600;line-height:1.5;color:var(--on-var)}
+.note ul{padding-left:18px}
+.note b{color:var(--on)}
+.note code{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;color:var(--on)}
+
+/* ---------- in-app ---------- */
+.status{position:absolute;top:0;left:0;right:0;height:46px;display:flex;align-items:center;justify-content:space-between;padding:4px 30px 0 32px;font-size:15px;font-weight:800;z-index:70;pointer-events:none}
+.status .r{display:flex;gap:6px;align-items:center;font-size:13px}
+.batt{display:inline-flex;align-items:center;justify-content:center;min-width:28px;height:15px;border-radius:5px;background:var(--on);color:var(--surface);font-size:10.5px;font-weight:900}
+body.fs .status,body.fs .det{display:none}
+
+/* the video box: VideoContent's Box. Edge to edge, right under the status bar. */
+.vid{position:absolute;left:0;right:0;top:46px;height:219.375px;background:#000;overflow:hidden;container-type:size;user-select:none;-webkit-user-select:none;cursor:pointer;touch-action:manipulation}
+body.fs .vid{top:0;height:100%}
+.frame{position:absolute;top:0;left:50%;height:100%;aspect-ratio:16/9;transform:translateX(-50%);overflow:hidden}
+.nudge{position:absolute;inset:0}
+.nudge canvas{width:100%;height:100%;display:block}
+
+/* position peek: a thin line along the bottom while seeking with controls hidden */
+.peek{position:absolute;left:0;right:0;bottom:0;height:3px;background:rgba(255,255,255,.28);opacity:0;transition:opacity calc(200ms*var(--slow)) var(--ease-rise)}
+.peek i{position:absolute;left:0;top:0;bottom:0;background:#fff}
+.peek.on{opacity:1}
+
+/* overlay controls (as shipped in 0.5.x) */
+.ov{position:absolute;inset:0;color:#fff;background:linear-gradient(rgba(0,0,0,.5),rgba(0,0,0,.08) 32%,rgba(0,0,0,.08) 58%,rgba(0,0,0,.62));transition:opacity calc(240ms*var(--slow)) var(--ease-rise);z-index:5}
+.ov.hide{opacity:0}
+.ov.hide *{pointer-events:none}
+.ov-top{position:absolute;top:10px;left:14px;right:10px;display:flex;align-items:center;gap:8px}
+.ov-title{flex:1;min-width:0;font-weight:800;font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;visibility:hidden}
+body.fs .ov-top{top:14px;left:58px;right:24px}
+body.fs .ov-title{visibility:visible}
+.qpill{background:rgba(0,0,0,.38);border-radius:999px;padding:7px 11px;font-size:11.5px;font-weight:900;white-space:nowrap}
+.ov-mid{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:flex;align-items:center;gap:30px}
+body.fs .ov-mid{gap:56px}
+.gb{background:rgba(0,0,0,.38);color:#fff;border-radius:50%;display:grid;place-items:center;position:relative;transition:transform .42s var(--ease-spring),border-radius .42s var(--ease-spring)}
+.gb:active{transform:scale(.94);transition-duration:.09s}
+.skip{width:48px;height:48px}
+.skip svg{width:30px;height:30px}
+.skip small{position:absolute;inset:0;display:grid;place-items:center;font-size:8.5px;font-weight:900;padding-top:3px}
+body.fs .skip{width:56px;height:56px}
+body.fs .skip svg{width:35px;height:35px}
+.opp{width:66px;height:66px;border-radius:22px}
+.opp.paused{border-radius:33px}
+.opp svg{width:32px;height:32px}
+body.fs .opp{width:76px;height:76px;border-radius:26px}
+body.fs .opp.paused{border-radius:38px}
+.flip{transform:scaleX(-1)}
+.ov-bot{position:absolute;left:14px;right:8px;bottom:4px}
+body.fs .ov-bot{left:58px;right:52px;bottom:14px}
+.ov-row{display:flex;align-items:center;gap:6px}
+.ov-time{flex:1;font-size:12px;font-weight:800}
+.ov-time span{opacity:.72}
+.fsb{width:34px;height:34px;display:grid;place-items:center;border-radius:50%}
+.fsb svg{width:22px;height:22px}
+.scrub{position:relative;height:14px}
+.scrub .t{position:absolute;left:0;right:0;top:5px;height:4px;border-radius:4px;background:rgba(255,255,255,.3)}
+.scrub .f{position:absolute;left:0;top:5px;height:4px;border-radius:4px;background:#fff}
+.scrub .k{position:absolute;top:1px;width:12px;height:12px;margin-left:-6px;border-radius:50%;background:#fff}
+
+/* touch marker for the demo (Android "show taps"), not part of the design */
+.finger{position:absolute;width:44px;height:44px;margin:-22px 0 0 -22px;border-radius:50%;background:rgba(255,255,255,.5);pointer-events:none;z-index:20}
+
+/* ---------- A · Edge wash ---------- */
+.wa{position:absolute;inset:0;pointer-events:none;opacity:0;transition:opacity calc(260ms*var(--slow)) var(--ease-rise);z-index:4}
+.wa.on{opacity:1;transition-duration:calc(140ms*var(--slow))}
+.wash{position:absolute;top:-28cqh;height:156cqh;width:118cqh;transition:transform calc(380ms*var(--slow)) var(--ease-rise)}
+.wa.l .wash{left:-40cqh;border-radius:0 50% 50% 0/0 50% 50% 0;transform-origin:left center;transform:scaleX(.55)}
+.wa.r .wash{right:-40cqh;border-radius:50% 0 0 50%/50% 0 0 50%;transform-origin:right center;transform:scaleX(.55)}
+.wa.on .wash{transform:none}
+.wash i{position:absolute;inset:0;border-radius:inherit}
+.wa.l .wash i{background:radial-gradient(farthest-side at 0% 50%,rgba(255,255,255,.3),rgba(255,255,255,.16))}
+.wa.r .wash i{background:radial-gradient(farthest-side at 100% 50%,rgba(255,255,255,.3),rgba(255,255,255,.16))}
+.wa-c{position:absolute;top:50%;display:flex;flex-direction:column;align-items:center;gap:calc(2px + 1cqh);color:#fff;transform:translate(-50%,-50%);text-shadow:0 1px 6px rgba(0,0,0,.35)}
+.wa.l .wa-c{left:max(78px,38cqh)}
+.wa.r .wa-c{left:calc(100cqw - max(78px,38cqh))}
+.chev{display:flex}
+.wa.l .chev{transform:scaleX(-1)}
+.chev svg{width:calc(12px + 4cqh);height:calc(12px + 4cqh);margin:0 calc(-1px - .4cqh);opacity:.25;filter:drop-shadow(0 1px 3px rgba(0,0,0,.3))}
+.wa-lab{font-size:calc(9px + 2cqh);font-weight:900;white-space:nowrap;display:flex;align-items:baseline;gap:.28em}
+
+/* rolling number, shared */
+.roll{display:inline-grid;overflow:hidden;line-height:1.2;vertical-align:bottom}
+.roll span{grid-area:1/1;text-align:center}
+
+/* ---------- B · Pop pill ---------- */
+.pb{position:absolute;top:50%;pointer-events:none;z-index:4;display:flex;flex-direction:column;align-items:center;transform:translate(-50%,-50%)}
+.pb.l{left:22%}
+.pb.r{left:78%}
+.pin{transform:scale(.4);opacity:0;transition:transform calc(200ms*var(--slow)) var(--ease-rise),opacity calc(200ms*var(--slow)) var(--ease-rise)}
+.pb.on .pin{transform:none;opacity:1;transition:transform calc(460ms*var(--slow)) var(--ease-spring),opacity calc(140ms*var(--slow)) var(--ease-rise)}
+.pill{height:calc(26px + 6cqh);padding:0 calc(10px + 3cqh) 0 calc(8px + 2.4cqh);border-radius:999px;background:rgba(0,0,0,.42);color:#fff;display:flex;align-items:center;gap:calc(3px + 1.2cqh);font-size:calc(10px + 2.6cqh);font-weight:900;white-space:nowrap}
+.pb.l .pill{flex-direction:row}
+.pill .g{display:block}
+.pill .g svg{width:calc(13px + 4cqh);height:calc(13px + 4cqh)}
+.pb.l .pill .g svg{transform:scaleX(-1)}
+.pill .num{display:flex;align-items:baseline;gap:1px}
+.pill .u{margin-left:2px;opacity:.75;font-size:.82em}
+.pt{margin-top:calc(4px + 1cqh);font-size:calc(9px + 1.6cqh);font-weight:800;color:#fff;opacity:0;text-shadow:0 1px 6px rgba(0,0,0,.55);transition:opacity calc(200ms*var(--slow)) var(--ease-rise);font-variant-numeric:tabular-nums}
+.pb.on .pt{opacity:.92}
+.sparks{position:absolute;left:50%;top:calc((26px + 6cqh)/2);width:0;height:0}
+.sparks i{position:absolute;width:7px;height:7px;margin:-3.5px 0 0 -3.5px;border-radius:50%}
+
+/* ---------- details under the video (portrait) ---------- */
+.det{position:absolute;top:265.375px;left:0;right:0;bottom:0;padding:14px 16px 0;overflow:hidden}
+.ptitle{font-size:19px;font-weight:900;letter-spacing:-.4px;line-height:1.2}
+.pmeta{font-size:13px;font-weight:700;color:var(--on-var);margin-top:6px}
+.chan{display:flex;align-items:center;gap:11px;margin-top:16px}
+.av{width:40px;height:40px;border-radius:50%;background:linear-gradient(145deg,#ff7a59,#7b3fe4);display:grid;place-items:center;font-weight:900;font-size:14px;color:#fff;flex:none}
+.chan .cx{flex:1}
+.chan .cx b{display:block;font-size:15px;font-weight:900}
+.chan .cx small{font-size:12px;font-weight:700;color:var(--on-var)}
+.subbtn{height:40px;padding:0 18px;border-radius:999px;background:var(--on);color:var(--surface);font-weight:900;font-size:14px;display:flex;align-items:center}
+.acts{display:flex;gap:8px;margin-top:16px}
+.act{height:38px;padding:0 14px;border-radius:999px;background:var(--sc);display:flex;align-items:center;gap:7px;font-size:13px;font-weight:800}
+.act svg{width:18px;height:18px}
+.ccard{margin-top:16px;background:var(--sc-low);border-radius:20px;padding:13px 15px}
+.ccard b{font-size:14px;font-weight:900}
+.ccard b span{color:var(--on-var);font-weight:800;margin-left:4px}
+.ccard p{display:flex;gap:9px;align-items:center;margin-top:9px;font-size:13px;font-weight:600;color:var(--on-var)}
+.ccard p i{width:24px;height:24px;border-radius:50%;background:#3d6ad6;flex:none;font-style:normal;font-size:10px;font-weight:900;color:#fff;display:grid;place-items:center}
+.more{margin-top:20px;font-size:18px;font-weight:900;letter-spacing:-.4px}
+.card{margin-top:12px;display:flex;gap:12px}
+.thumb{width:150px;flex:none;aspect-ratio:16/9;border-radius:14px}
+.card .vt{font-size:14px;font-weight:800;line-height:1.25}
+.card .vm{font-size:12px;font-weight:700;color:var(--on-var);margin-top:4px}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="intro">
+    <div>
+      <h1>Double-tap to seek</h1>
+      <p><b>Double-click the left or right side of a video</b>, then keep clicking to add 10 s per tap.
+        One click on a side (or anywhere in the middle) still shows the controls. Same behaviour in the
+        portrait player and in fullscreen; nothing on the mini-player.</p>
+    </div>
+    <div class="controls">
+      <div class="seg" data-mode><button class="on" data-v="portrait">Portrait player</button><button data-v="fs">Fullscreen</button></div>
+      <div class="seg" data-speed><button class="on" data-v="1">Real speed</button><button data-v="5">5× slower</button></div>
+      <button class="demo" data-demo><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 6.82v10.36c0 .79.87 1.27 1.54.84l8.14-5.18c.62-.39.62-1.29 0-1.69L9.54 5.98C8.87 5.55 8 6.03 8 6.82z"/></svg>Play the demo on both</button>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="shot">
+      <div class="phone"><div class="screen" data-player="A"></div></div>
+      <div class="cap"><b><em>A</em> · Edge wash</b>
+        <small>The familiar one. A soft half-moon of light swells in from the edge you tapped, three
+        chevrons run in the seek direction, and "10 seconds" rolls up to 20, 30… with every extra tap.</small></div>
+    </div>
+    <div class="shot">
+      <div class="phone"><div class="screen" data-player="B"></div></div>
+      <div class="cap"><b><em>B</em> · Pop pill</b>
+        <small>The Skipii one. A glass pill with the brand's fast-forward glyph springs out on that side.
+        Every tap squishes it, throws sparks, rolls "+10 s" up, and nudges the picture a few pixels
+        the way you're going. The time you'll land on sits under the pill.</small></div>
+    </div>
+  </div>
+
+  <div class="notes">
+    <div class="note"><h3>Gesture, both concepts</h3>
+      <ul>
+        <li><b>Zones:</b> left 40% seeks back, right 40% forward. A tap in the middle 20% only toggles the controls, with no waiting.</li>
+        <li><b>Burst:</b> a double tap starts it. Each further single tap on the same side within <b>0.6 s</b> adds 10 s, and the label shows the running total. It ends 0.6 s after the last tap.</li>
+        <li>Starting a burst hides the controls if they're showing. The thin line along the bottom shows where you'll land.</li>
+        <li><b>Cost:</b> one tap on a side shows the controls 300 ms late (Android's double-tap timeout), the same as YouTube.</li>
+      </ul></div>
+    <div class="note"><h3>A · Edge wash: details</h3>
+      <p>The wash is white at 13–26% on an elliptical half-moon that sizes off the video's <b>height</b>, so it stays in proportion in fullscreen.
+      It enters with scaleX 0.55 → 1 from the edge (380 ms, emphasized), and each tap gives the chevrons a fresh wave (110 ms stagger).
+      There's no ripple ring, because Skipii doesn't use tap ripples. Quiet, and anyone coming from YouTube reads it instantly.</p></div>
+    <div class="note"><h3>B · Pop pill: details</h3>
+      <p>The pill uses the controls' glass (black 42%, <b>no blur</b>, per 0.5.1). It springs in from 0.4×, and each tap does
+      a squish (1.14 × 0.88), a glyph dash and 8 sparks in white and brand red (the same burst as the like Pop in <code>Playful.kt</code>).
+      The frame nudge is ±5 px with a 3% scale, so the black edge never shows. With reduced motion there's no nudge and no sparks, just a fade.</p></div>
+    <div class="note"><h3>How it would be built</h3>
+      <p><code>detectTapGestures(onTap, onDoubleTap)</code> on the <code>VideoContent</code> box, plus a <code>SeekBurst</code>
+      state (side, totalMs, lastTapAt) that catches the follow-up single taps. It calls <code>state.seekBy</code> once per tap.
+      Everything is drawn with graphicsLayer alpha and scale (rules 2 and 3), and any spring keeps the 0.0005 threshold.
+      Optional: a light haptic tick on each +10.</p></div>
+  </div>
+</div>
+
+<script>
+const SLOW = { v: 1 };
+const ms = x => x * SLOW.v;
+const DOUBLE_MS = 300, CONT_MS = 600, STEP = 10, DUR = 876;
+const fmt = s => { s = Math.max(0, Math.round(s)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+
+const IC = {
+  replay: '<path d="M12 5V2.21c0-.45-.54-.67-.85-.35L7.35 5.65c-.2.2-.2.51 0 .71l3.79 3.79c.32.31.86.09.86-.36V7c3.73 0 6.68 3.42 5.86 7.29-.47 2.27-2.31 4.1-4.57 4.57-3.57.75-6.75-1.7-7.23-5.01-.07-.48-.49-.85-.98-.85-.6 0-1.08.53-1 1.13.62 4.39 4.8 7.64 9.53 6.72 3.12-.61 5.63-3.12 6.24-6.24C20.84 9.48 16.94 5 12 5z"/>',
+  ff: '<path d="M5.58 16.89l5.77-4.07c.56-.4.56-1.24 0-1.63L5.58 7.11C4.91 6.65 4 7.12 4 7.93v8.14c0 .81.91 1.28 1.58.82zM13 7.93v8.14c0 .81.91 1.28 1.58.82l5.77-4.07c.56-.4.56-1.24 0-1.63l-5.77-4.07c-.67-.47-1.58 0-1.58.81z"/>',
+  play: '<path d="M8 6.82v10.36c0 .79.87 1.27 1.54.84l8.14-5.18c.62-.39.62-1.29 0-1.69L9.54 5.98C8.87 5.55 8 6.03 8 6.82z"/>',
+  pause: '<path d="M8 19c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2s-2 .9-2 2v10c0 1.1.9 2 2 2zm6-12v10c0 1.1.9 2 2 2s2-.9 2-2V7c0-1.1-.9-2-2-2s-2 .9-2 2z"/>',
+  fs: '<path d="M6 14c-.55 0-1 .45-1 1v3c0 .55.45 1 1 1h3c.55 0 1-.45 1-1s-.45-1-1-1H7v-2c0-.55-.45-1-1-1zm0-4c.55 0 1-.45 1-1V7h2c.55 0 1-.45 1-1s-.45-1-1-1H6c-.55 0-1 .45-1 1v3c0 .55.45 1 1 1zm11 7h-2c-.55 0-1 .45-1 1s.45 1 1 1h3c.55 0 1-.45 1-1v-3c0-.55-.45-1-1-1s-1 .45-1 1v2zM14 6c0 .55.45 1 1 1h2v2c0 .55.45 1 1 1s1-.45 1-1V6c0-.55-.45-1-1-1h-3c-.55 0-1 .45-1 1z"/>',
+  fsExit: '<path d="M6 16h2v2c0 .55.45 1 1 1s1-.45 1-1v-3c0-.55-.45-1-1-1H6c-.55 0-1 .45-1 1s.45 1 1 1zm2-8H6c-.55 0-1 .45-1 1s.45 1 1 1h3c.55 0 1-.45 1-1V6c0-.55-.45-1-1-1s-1 .45-1 1v2zm7 11c.55 0 1-.45 1-1v-2h2c.55 0 1-.45 1-1s-.45-1-1-1h-3c-.55 0-1 .45-1 1v3c0 .55.45 1 1 1zm1-11V6c0-.55-.45-1-1-1s-1 .45-1 1v3c0 .55.45 1 1 1h3c.55 0 1-.45 1-1s-.45-1-1-1h-2z"/>',
+  like: '<path d="M13.12 2.06 7.58 7.6c-.37.37-.58.88-.58 1.41V19c0 1.1.9 2 2 2h9c.8 0 1.52-.48 1.84-1.21l3.26-7.61C23.94 10.2 22.49 8 20.34 8h-5.65l.95-4.58c.1-.5-.05-1.01-.41-1.37-.59-.58-1.53-.58-2.11.01zM3 21c1.1 0 2-.9 2-2v-8c0-1.1-.9-2-2-2s-2 .9-2 2v8c0 1.1.9 2 2 2z"/>',
+  save: '<path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z"/>',
+};
+const svg = (p, cls = '') => `<svg viewBox="0 0 24 24" fill="currentColor" class="${cls}">${p}</svg>`;
+
+/* Rolls a number in: old slides up and out, new slides up from below. */
+function roll(el, val) {
+  const old = el.querySelector('.cur');
+  if (old && old.textContent === String(val)) return;
+  const n = document.createElement('span');
+  n.className = 'cur'; n.textContent = val; el.append(n);
+  if (!old) return;
+  old.className = 'old';
+  const o = { duration: ms(280), easing: 'cubic-bezier(.2,.9,.2,1)', fill: 'forwards' };
+  old.animate([{ transform: 'translateY(0)', opacity: 1 }, { transform: 'translateY(-85%)', opacity: 0 }], o).onfinish = () => old.remove();
+  n.animate([{ transform: 'translateY(85%)', opacity: 0 }, { transform: 'translateY(0)', opacity: 1 }], o);
+}
+
+/* A drive along the coast at dusk: layers move at different speeds, so a 10 s jump is visible. */
+function drawScene(ctx, t) {
+  const W = 640, H = 360;
+  ctx.setTransform(1.5, 0, 0, 1.5, 0, 0);
+  const sky = ctx.createLinearGradient(0, 0, 0, H);
+  sky.addColorStop(0, '#232a63'); sky.addColorStop(.5, '#b85a78'); sky.addColorStop(.8, '#f19a6a'); sky.addColorStop(1, '#f7c27a');
+  ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H);
+  // sun
+  const sun = ctx.createRadialGradient(455, 205, 10, 455, 205, 120);
+  sun.addColorStop(0, 'rgba(255,236,180,1)'); sun.addColorStop(.32, 'rgba(255,214,150,.9)'); sun.addColorStop(1, 'rgba(255,190,130,0)');
+  ctx.fillStyle = sun; ctx.fillRect(300, 60, 320, 300);
+  // clouds
+  ctx.fillStyle = 'rgba(255,220,220,.35)';
+  for (let i = 0; i < 5; i++) {
+    const x = ((i * 190 - t * 6) % 900 + 900) % 900 - 120, y = 50 + (i % 3) * 34;
+    ctx.beginPath(); ctx.ellipse(x, y, 70, 11, 0, 0, Math.PI * 2); ctx.ellipse(x + 34, y - 8, 40, 10, 0, 0, Math.PI * 2); ctx.fill();
+  }
+  const ridge = (base, speed, a, color) => {
+    ctx.fillStyle = color; ctx.beginPath(); ctx.moveTo(0, H);
+    const o = t * speed;
+    for (let x = 0; x <= W; x += 8) {
+      const u = x + o;
+      ctx.lineTo(x, base - a * (Math.sin(u / 131) * 1.2 + Math.sin(u / 57) * .6 + Math.sin(u / 23) * .25));
+    }
+    ctx.lineTo(W, H); ctx.fill();
+  };
+  ridge(232, 9, 22, '#6b3d6e');
+  // a lighthouse on the far ridge drifts past slowly: the easiest thing to watch while seeking
+  const lx = 760 - ((t * 9) % 980);
+  ctx.fillStyle = '#3d2246'; ctx.fillRect(lx - 7, 166, 14, 60); ctx.fillRect(lx - 10, 160, 20, 8);
+  ctx.fillStyle = 'rgba(255,240,190,.95)'; ctx.fillRect(lx - 5, 150, 10, 10);
+  const beam = ctx.createLinearGradient(lx, 155, lx + 140, 140);
+  beam.addColorStop(0, 'rgba(255,240,190,.45)'); beam.addColorStop(1, 'rgba(255,240,190,0)');
+  ctx.fillStyle = beam; ctx.beginPath(); ctx.moveTo(lx, 152); ctx.lineTo(lx + 150, 128); ctx.lineTo(lx + 150, 168); ctx.fill();
+  ridge(278, 26, 14, '#3a2449');
+  // road
+  ctx.fillStyle = '#1b1426'; ctx.fillRect(0, 300, W, 60);
+  ctx.fillStyle = 'rgba(255,214,120,.8)';
+  const d = (t * 160) % 80;
+  for (let x = -d; x < W; x += 80) ctx.fillRect(x, 328, 40, 4);
+  // posts flicking by
+  ctx.fillStyle = '#120d1b';
+  const p = (t * 160) % 230;
+  for (let x = W - p; x > -20; x -= 230) ctx.fillRect(x, 262, 5, 40);
+}
+
+class Player {
+  constructor(screen, concept) {
+    this.s = screen; this.c = concept;
+    this.pos = 362; this.playing = true; this.controls = false;
+    this.pending = null; this.sess = null; this.hideTimer = 0;
+    this.build();
+    this.last = performance.now();
+    requestAnimationFrame(this.frame);
+  }
+
+  indicator(side) {
+    const lr = side < 0 ? 'l' : 'r';
+    if (this.c === 'A') return `<div class="wa ${lr}"><div class="wash"><i></i></div><div class="wa-c">
+      <div class="chev">${svg(IC.play).repeat(3)}</div>
+      <div class="wa-lab"><span class="roll"></span><span>seconds</span></div></div></div>`;
+    return `<div class="pb ${lr}"><div class="pin"><div class="sparks"></div><div class="pill">
+      <span class="g">${svg(IC.ff)}</span>
+      <span class="num"><span>${side < 0 ? '−' : '+'}</span><span class="roll"></span><span class="u">s</span></span>
+      </div></div><div class="pt"></div></div>`;
+  }
+
+  build() {
+    this.s.innerHTML = `
+      <div class="status"><span>9:41</span><span class="r">5G <span class="batt">82</span></span></div>
+      <div class="vid">
+        <div class="frame"><div class="nudge"><canvas width="960" height="540"></canvas></div><div class="peek"><i></i></div></div>
+        ${this.indicator(-1)}${this.indicator(1)}
+        <div class="ov hide">
+          <div class="ov-top"><span class="ov-title">Night drive along the coast · 4K ambient</span><span class="qpill">Auto · 1080p</span></div>
+          <div class="ov-mid">
+            <button class="gb skip" data-act="back" aria-label="Back 10 seconds">${svg(IC.replay)}<small>10</small></button>
+            <button class="gb opp" data-act="play" aria-label="Pause">${svg(IC.pause)}</button>
+            <button class="gb skip" data-act="fwd" aria-label="Forward 10 seconds">${svg(IC.replay, 'flip')}<small>10</small></button>
+          </div>
+          <div class="ov-bot">
+            <div class="ov-row"><span class="ov-time"><b data-cur>6:02</b> <span>/ ${fmt(DUR)}</span></span>
+              <button class="fsb" data-act="fs" aria-label="Fullscreen">${svg(IC.fs)}</button></div>
+            <div class="scrub"><i class="t"></i><i class="f"></i><b class="k"></b></div>
+          </div>
+        </div>
+      </div>
+      <div class="det">
+        <div class="ptitle">Night drive along the coast · 4K ambient</div>
+        <div class="pmeta"><b>218K views</b> · 3 weeks ago</div>
+        <div class="chan"><span class="av">SR</span><span class="cx"><b>Slow Roads</b><small>1.2M subscribers</small></span><span class="subbtn">Subscribe</span></div>
+        <div class="acts"><span class="act">${svg(IC.like)}9.4K</span><span class="act">${svg(IC.like, 'flipv')}</span><span class="act">${svg(IC.save)}Save</span></div>
+        <div class="ccard"><b>Comments<span>412</span></b><p><i>MK</i>Put this on at 2am and drove nowhere for an hour.</p></div>
+        <div class="more">More videos</div>
+        <div class="card"><span class="thumb" style="background:linear-gradient(160deg,#28406e,#e08d6b)"></span><span><div class="vt">Rain on a tin roof, 3 hours</div><div class="vm">Slow Roads · 1.1M views</div></span></div>
+        <div class="card"><span class="thumb" style="background:linear-gradient(160deg,#1f4d3a,#c6d27a)"></span><span><div class="vt">Forest train, cab view</div><div class="vm">Slow Roads · 640K views</div></span></div>
+      </div>`;
+    const q = sel => this.s.querySelector(sel);
+    this.vid = q('.vid'); this.ctx = q('canvas').getContext('2d'); this.nudge = q('.nudge');
+    this.ov = q('.ov'); this.peek = q('.peek'); this.peekFill = q('.peek i');
+    this.cur = q('[data-cur]'); this.fill = q('.scrub .f'); this.knob = q('.scrub .k');
+    this.playBtn = q('[data-act=play]');
+    this.ind = { '-1': this.s.querySelector(this.c === 'A' ? '.wa.l' : '.pb.l'), '1': this.s.querySelector(this.c === 'A' ? '.wa.r' : '.pb.r') };
+    this.s.querySelector('.flipv') && (this.s.querySelector('.flipv').style.transform = 'rotate(180deg)');
+
+    this.vid.addEventListener('pointerup', e => {
+      if (e.target.closest('button')) return;
+      const r = this.vid.getBoundingClientRect();
+      this.tap(e.clientX - r.left, e.clientY - r.top);
+    });
+    this.vid.addEventListener('dblclick', e => e.preventDefault());
+    this.s.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', e => {
+      e.stopPropagation();
+      const a = b.dataset.act;
+      if (a === 'play') this.togglePlay();
+      if (a === 'back') this.pos = clamp(this.pos - STEP, 0, DUR);
+      if (a === 'fwd') this.pos = clamp(this.pos + STEP, 0, DUR);
+      if (a === 'fs') setMode(document.body.classList.contains('fs') ? 'portrait' : 'fs');
+      this.touched();
+    }));
+  }
+
+  frame = now => {
+    const dt = Math.min(.1, (now - this.last) / 1000); this.last = now;
+    if (this.playing) this.pos = clamp(this.pos + dt / SLOW.v, 0, DUR);
+    drawScene(this.ctx, this.pos);
+    const f = this.pos / DUR * 100;
+    this.cur.textContent = fmt(this.pos);
+    this.fill.style.width = f + '%'; this.knob.style.left = f + '%';
+    this.peekFill.style.width = f + '%';
+    requestAnimationFrame(this.frame);
+  };
+
+  // --- gesture ---
+  tap(x, y, fake) {
+    if (fake) this.finger(x, y);
+    const w = this.vid.clientWidth;
+    const side = x < w * .4 ? -1 : x > w * .6 ? 1 : 0;
+    const now = performance.now();
+    const s = this.sess;
+    if (s && side === s.side && now - s.last < ms(CONT_MS)) { this.step(); return; }
+    if (s) this.endSess();
+    if (side === 0) { this.cancelPending(); this.toggleControls(); return; }
+    if (this.pending && this.pending.side === side && now - this.pending.t < ms(DOUBLE_MS)) {
+      this.cancelPending(); this.startSess(side); return;
+    }
+    this.cancelPending();
+    this.pending = { side, t: now, timer: setTimeout(() => { this.pending = null; this.toggleControls(); }, ms(DOUBLE_MS)) };
+  }
+  cancelPending() { if (this.pending) { clearTimeout(this.pending.timer); this.pending = null; } }
+
+  startSess(side) {
+    if (this.controls) this.setControls(false);
+    this.sess = { side, total: 0, last: 0, timer: 0 };
+    const el = this.ind[side];
+    el.querySelector('.roll').innerHTML = '';
+    el.classList.add('on');
+    this.peek.classList.add('on');
+    this.step();
+  }
+  step() {
+    const s = this.sess, el = this.ind[s.side];
+    const target = clamp(this.pos + s.side * STEP, 0, DUR);
+    if (target !== this.pos) s.total += STEP;
+    this.pos = target;
+    s.last = performance.now();
+    clearTimeout(s.timer);
+    s.timer = setTimeout(() => this.endSess(), ms(CONT_MS));
+    roll(el.querySelector('.roll'), s.total || STEP);
+    if (this.c === 'A') this.stepA(el); else this.stepB(el, s.side);
+  }
+  endSess() {
+    const s = this.sess; if (!s) return;
+    clearTimeout(s.timer);
+    this.ind[s.side].classList.remove('on');
+    this.peek.classList.remove('on');
+    this.sess = null;
+  }
+
+  stepA(el) {
+    el.querySelector('.wash i').animate(
+      [{ transform: 'scale(1)' }, { transform: 'scale(1.07)', offset: .35 }, { transform: 'scale(1)' }],
+      { duration: ms(420), easing: 'cubic-bezier(.2,.9,.2,1)' });
+    el.querySelectorAll('.chev svg').forEach((c, i) => c.animate(
+      [{ opacity: .25 }, { opacity: 1, offset: .3 }, { opacity: .25 }],
+      { duration: ms(560), delay: ms(i * 110), easing: 'ease-out' }));
+    el.querySelector('.wa-lab').animate(
+      [{ transform: 'scale(1)' }, { transform: 'scale(1.08)', offset: .35 }, { transform: 'scale(1)' }],
+      { duration: ms(340), easing: 'cubic-bezier(.34,1.56,.64,1)' });
+  }
+
+  stepB(el, side) {
+    el.querySelector('.pill').animate(
+      [{ transform: 'scale(1)' }, { transform: 'scale(1.14,.88)', offset: .28 }, { transform: 'scale(.96,1.04)', offset: .62 }, { transform: 'scale(1)' }],
+      { duration: ms(440), easing: 'ease-out' });
+    el.querySelector('.g').animate(
+      [{ transform: 'translateX(0)' }, { transform: `translateX(${side * 6}px)`, offset: .3 }, { transform: 'translateX(0)' }],
+      { duration: ms(380), easing: 'cubic-bezier(.2,.9,.2,1)' });
+    this.nudge.animate(
+      [{ transform: 'none' }, { transform: `translateX(${side * 5}px) scale(1.03)`, offset: .3 }, { transform: 'none' }],
+      { duration: ms(440), easing: 'cubic-bezier(.2,.9,.2,1)' });
+    el.querySelector('.pt').textContent = fmt(this.pos);
+    const box = el.querySelector('.sparks'), pillW = el.querySelector('.pill').offsetWidth;
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2 + Math.PI / 8, r = pillW * .5 + 16;
+      const d = document.createElement('i');
+      d.style.background = i % 2 ? '#fff' : 'var(--primary)';
+      box.append(d);
+      const sx = Math.cos(a) * pillW * .36, sy = Math.sin(a) * 12;
+      d.animate([
+        { transform: `translate(${sx}px,${sy}px) scale(1)`, opacity: 1 },
+        { transform: `translate(${Math.cos(a) * r}px,${Math.sin(a) * (r * .62)}px) scale(.35)`, opacity: 0 },
+      ], { duration: ms(520), easing: 'cubic-bezier(.2,.9,.2,1)', fill: 'forwards' }).onfinish = () => d.remove();
+    }
+  }
+
+  // --- controls ---
+  setControls(v) {
+    this.controls = v;
+    this.ov.classList.toggle('hide', !v);
+    this.touched();
+  }
+  toggleControls() { this.setControls(!this.controls); }
+  touched() {
+    clearTimeout(this.hideTimer);
+    if (this.controls && this.playing) this.hideTimer = setTimeout(() => this.setControls(false), ms(2000));
+  }
+  togglePlay() {
+    this.playing = !this.playing;
+    this.playBtn.innerHTML = svg(this.playing ? IC.pause : IC.play);
+    this.playBtn.classList.toggle('paused', !this.playing);
+  }
+  finger(x, y) {
+    const f = document.createElement('div');
+    f.className = 'finger'; f.style.left = x + 'px'; f.style.top = y + 'px';
+    this.vid.append(f);
+    f.animate([{ transform: 'scale(.7)', opacity: .9 }, { transform: 'scale(1)', opacity: 0 }],
+      { duration: ms(320), easing: 'ease-out', fill: 'forwards' }).onfinish = () => f.remove();
+  }
+}
+
+const players = [...document.querySelectorAll('[data-player]')].map(el => new Player(el, el.dataset.player));
+
+function setMode(v) {
+  document.body.classList.toggle('fs', v === 'fs');
+  document.querySelectorAll('[data-mode] button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
+  players.forEach(p => p.s.querySelector('[data-act=fs]').innerHTML = svg(v === 'fs' ? IC.fsExit : IC.fs));
+}
+document.querySelectorAll('[data-mode] button').forEach(b => b.onclick = () => setMode(b.dataset.v));
+document.querySelectorAll('[data-speed] button').forEach(b => b.onclick = () => {
+  SLOW.v = +b.dataset.v;
+  document.documentElement.style.setProperty('--slow', SLOW.v);
+  document.querySelectorAll('[data-speed] button').forEach(o => o.classList.toggle('on', o === b));
+});
+
+const demoBtn = document.querySelector('[data-demo]');
+demoBtn.onclick = () => {
+  demoBtn.disabled = true;
+  // double tap right, two more taps (+30 s), pause, double tap left, one more (−20 s)
+  const seq = [[0, 1], [150, 1], [500, 1], [860, 1], [2700, -1], [2850, -1], [3250, -1]];
+  seq.forEach(([t, side]) => setTimeout(() => players.forEach(p => {
+    const w = p.vid.clientWidth, h = p.vid.clientHeight;
+    p.tap(side > 0 ? w * .78 : w * .22, h * .52, true);
+  }), ms(t)));
+  setTimeout(() => demoBtn.disabled = false, ms(4800));
+};
+</script>
+</body>
+</html>
