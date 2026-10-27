@@ -2,10 +2,6 @@
 
 A modern, ad-free YouTube player for Android built with Jetpack Compose and Material 3 Expressive.
 
-No ads. Use it signed out, or sign in with Google to get your personalized recommendations,
-subscriptions feed, watch history, and playlists with full likes, subscribes, and watch history sync.
-Sponsor segments are automatically skipped with [SponsorBlock](https://sponsor.ajay.app).
-
 ---
 
 ## Key Features
