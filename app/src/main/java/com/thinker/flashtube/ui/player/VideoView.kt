@@ -50,11 +50,15 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.rounded.VolumeMute
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.AspectRatio
+import androidx.compose.material.icons.rounded.Audiotrack
+import androidx.compose.material.icons.rounded.BrightnessAuto
 import androidx.compose.material.icons.rounded.BrightnessMedium
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.ClosedCaption
 import androidx.compose.material.icons.rounded.CropFree
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.FastForward
@@ -76,6 +80,7 @@ import androidx.compose.material.icons.rounded.Replay10
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.Speed
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.ZoomIn
 import androidx.compose.ui.composed
 import androidx.compose.ui.graphics.luminance
@@ -84,11 +89,15 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.ui.draw.scale
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -115,6 +124,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.layout
+import kotlin.math.roundToInt
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -259,6 +269,8 @@ fun VideoContent(
                 val downX = down.position.x / size.width
                 val downY = down.position.y
                 var isDraggingGesture = false
+                var initialBrightness = -1f
+                var initialVolume = -1f
                 var lastY = downY
 
                 // Check for vertical drag gesture:
@@ -277,13 +289,28 @@ fun VideoContent(
                             val isVerticalIntent = kotlin.math.abs(totalDy) > kotlin.math.abs(totalDx) * 1.5f
 
                             if (fullscreen) {
-                                // Narrow edge zones: left 20% for brightness, right 20% for volume (center 60% stays untouched for UI/scrub/tap)
-                                val isLeftEdge = downX < 0.20f
-                                val isRightEdge = downX > 0.80f
+                                // Narrow edge zones: left 25% for brightness, right 25% for volume
+                                val isLeftEdge = downX < 0.25f
+                                val isRightEdge = downX > 0.75f
 
-                                if (!isDraggingGesture && isVerticalIntent && kotlin.math.abs(totalDy) > 60f) {
+                                if (!isDraggingGesture && isVerticalIntent && kotlin.math.abs(totalDy) > 30f) {
                                     if (isLeftEdge || isRightEdge) {
                                         isDraggingGesture = true
+                                        if (isLeftEdge && activity != null) {
+                                            val attrs = activity.window.attributes
+                                            initialBrightness = if (attrs.screenBrightness < 0f) {
+                                                runCatching {
+                                                    android.provider.Settings.System.getInt(
+                                                        context.contentResolver,
+                                                        android.provider.Settings.System.SCREEN_BRIGHTNESS,
+                                                    ) / 255f
+                                                }.getOrDefault(0.5f)
+                                            } else {
+                                                attrs.screenBrightness
+                                            }
+                                        } else if (isRightEdge && audioManager != null) {
+                                            initialVolume = audioManager.getStreamVolume(android.media.AudioManager.STREAM_MUSIC).toFloat()
+                                        }
                                     } else if (totalDy < -90f) {
                                         // Intentional center swipe down to exit fullscreen
                                         verticalSwipeHandled = true
@@ -293,28 +320,29 @@ fun VideoContent(
                                 }
                                 if (isDraggingGesture) {
                                     change.consume()
-                                    if (isLeftEdge && activity != null) {
+                                    val dragFraction = totalDy / (size.height * 0.85f)
+                                    if (isLeftEdge && activity != null && initialBrightness >= 0f) {
                                         val window = activity.window
                                         val attrs = window.attributes
-                                        val currentB = if (attrs.screenBrightness < 0f) 0.5f else attrs.screenBrightness
-                                        // Reduced rate of change so slight movements don't cause sudden jumps
-                                        val newB = (currentB + (dy / size.height) * 0.85f).coerceIn(0.02f, 1f)
-                                        attrs.screenBrightness = newB
-                                        window.attributes = attrs
-                                        gestureHud = Pair(Icons.Rounded.BrightnessMedium, Pair("Brightness", newB))
-                                    } else if (isRightEdge && audioManager != null) {
-                                        val maxV = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-                                        val curV = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-                                        // Smoothed volume step delta
-                                        val deltaV = ((dy / size.height) * maxV * 1.0f).toInt()
-                                        if (deltaV != 0) {
-                                            val newV = (curV + deltaV).coerceIn(0, maxV)
-                                            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newV, 0)
-                                            val icon = if (newV == 0) Icons.AutoMirrored.Rounded.VolumeMute else Icons.AutoMirrored.Rounded.VolumeUp
-                                            gestureHud = Pair(icon, Pair("Volume", newV.toFloat() / maxV.toFloat()))
+                                        val targetB = initialBrightness + dragFraction
+                                        if (targetB <= -0.05f) {
+                                            attrs.screenBrightness = android.view.WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_OFF
+                                            window.attributes = attrs
+                                            gestureHud = Pair(Icons.Rounded.BrightnessAuto, Pair("Brightness", -1f))
+                                        } else {
+                                            val setB = targetB.coerceIn(0.01f, 1f)
+                                            attrs.screenBrightness = setB
+                                            window.attributes = attrs
+                                            gestureHud = Pair(Icons.Rounded.BrightnessMedium, Pair("Brightness", setB))
                                         }
+                                    } else if (isRightEdge && audioManager != null && initialVolume >= 0f) {
+                                        val maxV = audioManager.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC).toFloat()
+                                        val targetV = (initialVolume + dragFraction * maxV).coerceIn(0f, maxV)
+                                        val newVInt = targetV.roundToInt()
+                                        audioManager.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, newVInt, 0)
+                                        val icon = if (newVInt == 0) Icons.AutoMirrored.Rounded.VolumeMute else Icons.AutoMirrored.Rounded.VolumeUp
+                                        gestureHud = Pair(icon, Pair("Volume", targetV / maxV))
                                     }
-                                    lastY = change.position.y
                                 }
                             } else {
                                 // In portrait: handled by VideoStage's draggable (.draggable) to prevent double-triggering
@@ -533,20 +561,6 @@ fun VideoContent(
                         Spacer(Modifier.weight(1f))
                     }
 
-                    // Zoom to fill / Fit to screen button
-                    GlassButton(
-                        if (state.zoomToFill) Icons.Rounded.AspectRatio else Icons.Rounded.CropFree,
-                        if (state.zoomToFill) "Fit to screen" else "Fill screen",
-                        enabled,
-                        size = 32.dp,
-                        iconSize = 18.dp,
-                        tinted = state.zoomToFill,
-                    ) {
-                        touched()
-                        state.toggleZoomToFill()
-                    }
-                    Spacer(Modifier.width(6.dp))
-
                     // Picture-in-picture
                     if (pip?.supported == true) {
                         GlassButton(Icons.Rounded.PictureInPictureAlt, "Picture-in-picture", enabled, size = 32.dp, iconSize = 18.dp) {
@@ -557,7 +571,7 @@ fun VideoContent(
                     }
 
                     // Settings (Gear) icon - opens playback settings list (Morphe/YouTube style)
-                    GlassButton(Icons.Rounded.Settings, "Playback settings", enabled, size = 32.dp, iconSize = 20.dp) {
+                    GlassButton(Icons.Rounded.Settings, "Playback settings", enabled, size = 32.dp, iconSize = 18.dp) {
                         touched()
                         state.sheet = PlayerSheet.Settings
                     }
@@ -1003,135 +1017,415 @@ private fun QualityRow(title: String, subtitle: String?, selected: Boolean, onCl
 }
 
 /**
- * Playback Settings Menu (Morphe / YouTube mod style list).
+ * Playback Settings Menu — sleek, compact, and minimal panel matching modern YouTube.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PlayerSettingsSheet(state: PlayerState, onDismiss: () -> Unit) {
     val c = MaterialTheme.colorScheme
+    var currentSubMenu by remember { mutableStateOf<String?>(null) }
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = c.surfaceContainerLow,
+        dragHandle = {
+            Box(
+                Modifier
+                    .padding(top = 10.dp, bottom = 8.dp)
+                    .size(width = 32.dp, height = 4.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(c.onSurfaceVariant.copy(alpha = 0.35f))
+            )
+        },
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp)
                 .padding(bottom = 24.dp)
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(rememberScrollState()),
         ) {
-            Text(
-                "Playback Settings",
-                fontFamily = RoundedHeavy,
-                fontWeight = FontWeight.Bold,
-                fontSize = 18.sp,
-                modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp)
-            )
+            when (currentSubMenu) {
+                "speed" -> {
+                    // Header with back arrow
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .pressable { currentSubMenu = null },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Rounded.ArrowBack,
+                                contentDescription = "Back",
+                                tint = c.onSurface,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            "Playback speed",
+                            fontFamily = RoundedHeavy,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 17.sp,
+                            color = c.onSurface,
+                        )
+                    }
 
-            Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(4.dp))
 
-            // 1. Quality
-            val qualityText = (state.decodedHeight?.let { "${it}p" } ?: state.details?.quality) ?: "Auto"
-            PlayerSettingItem(
-                icon = Icons.Rounded.HighQuality,
-                title = "Quality",
-                value = if (QualityPreference.height == null) "Auto ($qualityText)" else qualityText,
-                onClick = {
-                    onDismiss()
-                    state.sheet = PlayerSheet.Quality
+                    val speedPresets = listOf(
+                        0.25f to "0.25×",
+                        0.5f to "0.5×",
+                        0.75f to "0.75×",
+                        1.0f to "Normal",
+                        1.25f to "1.25×",
+                        1.5f to "1.5×",
+                        1.75f to "1.75×",
+                        2.0f to "2×",
+                    )
+
+                    speedPresets.forEach { (speedValue, speedLabel) ->
+                        val selected = kotlin.math.abs(state.speed - speedValue) < 0.02f
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .pressable(pressedScale = 0.98f) {
+                                    state.commitSpeed(speedValue)
+                                    currentSubMenu = null
+                                }
+                                .padding(horizontal = 20.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = speedLabel,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                                fontSize = 15.sp,
+                                color = if (selected) c.primary else c.onSurface,
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (selected) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Check,
+                                    contentDescription = "Selected",
+                                    tint = c.primary,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            }
+                        }
+                    }
                 }
-            )
+                "audio" -> {
+                    // Header with back arrow
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .pressable { currentSubMenu = null },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Rounded.ArrowBack,
+                                contentDescription = "Back",
+                                tint = c.onSurface,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            "Audio track",
+                            fontFamily = RoundedHeavy,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 17.sp,
+                            color = c.onSurface,
+                        )
+                    }
 
-            // 2. Playback Speed
-            PlayerSettingItem(
-                icon = Icons.Rounded.Speed,
-                title = "Playback speed",
-                value = if (state.speed == 1f) "Normal (1.0×)" else "${state.speed}×",
-                onClick = {
-                    val speeds = listOf(1f, 1.25f, 1.5f, 2f, 0.75f)
-                    val idx = speeds.indexOf(state.speed)
-                    val next = speeds[(idx + 1).coerceAtLeast(0) % speeds.size]
-                    state.commitSpeed(next)
+                    Spacer(Modifier.height(4.dp))
+
+                    val videoId = state.current?.id
+                    val cachedInfo = remember(videoId) { videoId?.let { StreamCache.get(it) } }
+                    val audioStreams = remember(cachedInfo) {
+                        cachedInfo?.audioStreams.orEmpty().filter { it.isUrl }
+                    }
+
+                    if (audioStreams.isEmpty()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 20.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = "Default (Original)",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp,
+                                color = c.primary,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Icon(
+                                imageVector = Icons.Rounded.Check,
+                                contentDescription = "Selected",
+                                tint = c.primary,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                    } else {
+                        val tracks = audioStreams.distinctBy { it.audioTrackName ?: it.audioTrackType?.name ?: "Default" }
+                        tracks.forEach { audio ->
+                            val trackName = audio.audioTrackName ?: audio.audioTrackType?.name ?: "Default"
+                            val isSelected = state.selectedAudioLanguage == trackName || (state.selectedAudioLanguage == null && tracks.indexOf(audio) == 0)
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .pressable(pressedScale = 0.98f) {
+                                        state.setAudioLanguage(trackName)
+                                        currentSubMenu = null
+                                    }
+                                    .padding(horizontal = 20.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = trackName,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    fontSize = 15.sp,
+                                    color = if (isSelected) c.primary else c.onSurface,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                if (isSelected) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Check,
+                                        contentDescription = "Selected",
+                                        tint = c.primary,
+                                        modifier = Modifier.size(20.dp),
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
-            )
+                "more" -> {
+                    // Header with back arrow
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .pressable { currentSubMenu = null },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Rounded.ArrowBack,
+                                contentDescription = "Back",
+                                tint = c.onSurface,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            "More options",
+                            fontFamily = RoundedHeavy,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 17.sp,
+                            color = c.onSurface,
+                        )
+                    }
 
-            // 3. Loop Video
-            PlayerSettingItem(
-                icon = Icons.Rounded.Repeat,
-                title = "Loop video",
-                value = if (state.loopEnabled) "On" else "Off",
-                onClick = { state.toggleLoop() }
-            )
+                    Spacer(Modifier.height(4.dp))
 
-            // 4. Autoplay
-            PlayerSettingItem(
-                icon = Icons.Rounded.PlayCircle,
-                title = "Autoplay",
-                value = if (state.autoPlayEnabled) "On" else "Off",
-                onClick = { state.toggleAutoPlay() }
-            )
+                    // Loop Video
+                    CompactPlayerSwitchRow(
+                        icon = Icons.Rounded.Repeat,
+                        title = "Loop video",
+                        checked = state.loopEnabled,
+                        onCheckedChange = { state.toggleLoop() },
+                    )
 
-            // 5. Video aspect
-            PlayerSettingItem(
-                icon = if (state.zoomToFill) Icons.Rounded.AspectRatio else Icons.Rounded.CropFree,
-                title = "Video aspect",
-                value = if (state.zoomToFill) "Zoom to fill" else "Fit to screen",
-                onClick = { state.toggleZoomToFill() }
-            )
+                    // Autoplay
+                    CompactPlayerSwitchRow(
+                        icon = Icons.Rounded.PlayCircle,
+                        title = "Autoplay next",
+                        checked = state.autoPlayEnabled,
+                        onCheckedChange = { state.toggleAutoPlay() },
+                    )
 
-            // 6. Video Zoom
-            val zoomText = if (state.videoZoom > 1.05f) "${(state.videoZoom * 10).toInt() / 10f}× (Reset)" else "1.0×"
-            PlayerSettingItem(
-                icon = Icons.Rounded.ZoomIn,
-                title = "Video zoom",
-                value = zoomText,
-                onClick = { state.resetZoom() }
-            )
+                    // Audio Only
+                    CompactPlayerSwitchRow(
+                        icon = Icons.Rounded.Headphones,
+                        title = "Audio only",
+                        checked = AudioOnly.enabled,
+                        onCheckedChange = { state.setAudioOnly(!AudioOnly.enabled) },
+                    )
 
-            // 6. Audio Only
-            PlayerSettingItem(
-                icon = Icons.Rounded.Headphones,
-                title = "Audio only",
-                value = if (AudioOnly.enabled) "On" else "Off",
-                onClick = { state.setAudioOnly(!AudioOnly.enabled) }
-            )
+                    // Video aspect (Zoom to fill)
+                    CompactPlayerSwitchRow(
+                        icon = if (state.zoomToFill) Icons.Rounded.AspectRatio else Icons.Rounded.CropFree,
+                        title = "Zoom to fill screen",
+                        checked = state.zoomToFill,
+                        onCheckedChange = { state.toggleZoomToFill() },
+                    )
 
-            // 7. Video Codec / Format
-            state.playingFormat?.let { format ->
-                PlayerSettingItem(
-                    icon = Icons.Rounded.Info,
-                    title = "Video format",
-                    value = format,
-                    onClick = null
-                )
+                    // Manual Zoom Reset
+                    if (state.videoZoom > 1.05f) {
+                        CompactPlayerNavRow(
+                            icon = Icons.Rounded.ZoomIn,
+                            title = "Reset manual zoom",
+                            value = "${(state.videoZoom * 10).toInt() / 10f}×",
+                            onClick = { state.resetZoom() },
+                        )
+                    }
+                }
+                else -> {
+                    Text(
+                        "Playback settings",
+                        fontFamily = RoundedHeavy,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 17.sp,
+                        color = c.onSurface,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                    )
+
+                    Spacer(Modifier.height(4.dp))
+
+                    // 1. Quality
+                    val qualityText = (state.decodedHeight?.let { "${it}p" } ?: state.details?.quality) ?: "Auto"
+                    CompactPlayerNavRow(
+                        icon = Icons.Rounded.HighQuality,
+                        title = "Quality",
+                        value = if (QualityPreference.height == null) "Auto • $qualityText" else qualityText,
+                        onClick = {
+                            onDismiss()
+                            state.sheet = PlayerSheet.Quality
+                        },
+                    )
+
+                    // 2. Playback Speed
+                    val speedDisplay = if (state.speed == 1f) "Normal" else "${state.speed}×"
+                    CompactPlayerNavRow(
+                        icon = Icons.Rounded.Speed,
+                        title = "Playback speed",
+                        value = speedDisplay,
+                        onClick = { currentSubMenu = "speed" },
+                    )
+
+                    // 3. Captions
+                    val captionsText = if (state.selectedSubtitleLanguage != null) "On" else "Off"
+                    CompactPlayerNavRow(
+                        icon = Icons.Rounded.ClosedCaption,
+                        title = "Captions",
+                        value = captionsText,
+                        onClick = {
+                            onDismiss()
+                            state.sheet = PlayerSheet.Subtitles
+                        },
+                    )
+
+                    // 4. Audio track (YouTube Multi-language Dubs)
+                    val audioTrackVal = state.selectedAudioLanguage?.uppercase() ?: "Default"
+                    CompactPlayerNavRow(
+                        icon = Icons.Rounded.Audiotrack,
+                        title = "Audio track",
+                        value = audioTrackVal,
+                        onClick = { currentSubMenu = "audio" },
+                    )
+
+                    // 5. More options (Contains loop, autoplay, audio only, aspect, zoom)
+                    CompactPlayerNavRow(
+                        icon = Icons.Rounded.Tune,
+                        title = "More options",
+                        value = "",
+                        onClick = { currentSubMenu = "more" },
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-private fun PlayerSettingItem(
+private fun CompactPlayerNavRow(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     title: String,
     value: String,
-    onClick: (() -> Unit)? = null,
+    onClick: () -> Unit,
 ) {
     val c = MaterialTheme.colorScheme
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .then(if (onClick != null) Modifier.pressable(pressedScale = 0.98f, onClick = onClick) else Modifier)
-            .padding(vertical = 3.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(c.surfaceContainerHigh.copy(alpha = 0.5f))
-            .padding(horizontal = 14.dp, vertical = 11.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .pressable(pressedScale = 0.98f, onClick = onClick)
+            .padding(horizontal = 20.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, null, tint = c.primary, modifier = Modifier.size(20.dp))
-        Spacer(Modifier.width(14.dp))
-        Text(title, fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp, color = c.onSurface, modifier = Modifier.weight(1f))
-        Text(value, fontWeight = FontWeight.Medium, fontSize = 13.sp, color = c.onSurfaceVariant)
+        Icon(icon, null, tint = c.onSurface, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.width(16.dp))
+        Text(
+            text = title,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Normal,
+            color = c.onSurface,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = value,
+            fontSize = 13.5.sp,
+            color = c.onSurfaceVariant,
+        )
+        Spacer(Modifier.width(6.dp))
+        Icon(
+            imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+            contentDescription = null,
+            tint = c.onSurfaceVariant.copy(alpha = 0.5f),
+            modifier = Modifier.size(18.dp),
+        )
+    }
+}
+
+@Composable
+private fun CompactPlayerSwitchRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    val c = MaterialTheme.colorScheme
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .pressable(pressedScale = 0.98f) { onCheckedChange(!checked) }
+            .padding(horizontal = 20.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, tint = c.onSurface, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.width(16.dp))
+        Text(
+            text = title,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Normal,
+            color = c.onSurface,
+            modifier = Modifier.weight(1f),
+        )
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(checkedTrackColor = c.primary),
+            modifier = Modifier.scale(0.85f),
+        )
     }
 }
 
@@ -1481,7 +1775,7 @@ private fun GestureHUD(
         ) {
             Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
             Text(
-                text = "$label ${(percent * 100).toInt().coerceIn(0, 100)}%",
+                text = if (percent < 0f) "$label: Auto" else "$label: ${(percent * 100).roundToInt().coerceIn(0, 100)}%",
                 color = Color.White,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Bold,

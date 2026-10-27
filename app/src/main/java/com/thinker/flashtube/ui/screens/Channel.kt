@@ -157,7 +157,7 @@ fun ChannelScreen(state: ChannelState, contentPadding: PaddingValues, onBack: ()
                             Spacer(Modifier.height(16.dp))
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            ChannelAvatar(d.avatar, d.name, size = 76)
+                            ChannelAvatar(d.avatar, d.name, size = 76, isLive = d.isLive)
                             Spacer(Modifier.width(14.dp))
                             Column(Modifier.weight(1f)) {
                                 ChannelNameWithBadge(d.name, verified = d.verified, maxLines = 2)
@@ -200,7 +200,7 @@ private fun ChannelSubscribeButton(subscribed: Boolean, onClick: () -> Unit) {
         Modifier
             .squishOn(subscribed)
             .fillMaxWidth()
-            .height(46.dp)
+            .height(38.dp)
             .pressable(onClick = onClick)
             .clip(CircleShape)
             .background(if (subscribed) c.secondaryContainer else c.onSurface),
@@ -208,9 +208,14 @@ private fun ChannelSubscribeButton(subscribed: Boolean, onClick: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (subscribed) {
-            FlourishIcon(Icons.Rounded.NotificationsActive, null, active = true, kind = Flourish.Ring, tint = c.onSecondaryContainer, size = 18.dp)
-            Spacer(Modifier.width(6.dp))
+            FlourishIcon(Icons.Rounded.NotificationsActive, null, active = true, kind = Flourish.Ring, tint = c.onSecondaryContainer, size = 16.dp)
+            Spacer(Modifier.width(5.dp))
         }
-        Text(if (subscribed) "Subscribed" else "Subscribe", color = if (subscribed) c.onSecondaryContainer else c.surface, fontWeight = FontWeight.ExtraBold, fontSize = 14.sp)
+        Text(
+            if (subscribed) "Subscribed" else "Subscribe",
+            color = if (subscribed) c.onSecondaryContainer else c.surface,
+            fontWeight = FontWeight.Bold,
+            fontSize = 13.5.sp,
+        )
     }
 }

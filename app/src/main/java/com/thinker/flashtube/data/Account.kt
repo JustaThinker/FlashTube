@@ -1,6 +1,7 @@
 package com.thinker.flashtube
 
 import android.content.Context
+import android.content.SharedPreferences
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -23,7 +24,12 @@ data class Profile(val name: String, val handle: String?, val avatar: String?)
 data class PlaylistRef(val id: String, val title: String, val thumbnail: String?, val subtitle: String?)
 
 @Immutable
-data class ChannelRef(val id: String, val name: String, val avatar: String?) {
+data class ChannelRef(
+    val id: String,
+    val name: String,
+    val avatar: String?,
+    val isLive: Boolean = false,
+) {
     val url: String get() = "https://www.youtube.com/channel/$id"
 }
 
@@ -41,6 +47,15 @@ data class VideoAccountState(val like: LikeStatus, val subscribed: Boolean?, val
 
 class NotSignedInException : IOException("Not signed in")
 
+@Immutable
+data class StoredAccount(
+    val id: String,
+    val profile: Profile,
+    val cookieHeader: String,
+    val clientVersion: String = "2.20260901.00.00",
+    val visitorData: String? = null,
+)
+
 /**
  * The signed-in Google session (user chose full sync, 2026-10-04).
  *
@@ -50,10 +65,14 @@ class NotSignedInException : IOException("Not signed in")
  * are merged back in so the session stays alive.
  */
 object Account {
+    var accounts by mutableStateOf<List<StoredAccount>>(emptyList())
+        private set
+
     var profile by mutableStateOf<Profile?>(null)
         private set
     val signedIn get() = profile != null
 
+    private var activeAccountId: String? = null
     private var store: SecureStore? = null
     private val cookies = linkedMapOf<String, String>()
     private var clientVersion = FALLBACK_CLIENT_VERSION
@@ -61,13 +80,75 @@ object Account {
 
     fun init(context: Context) {
         val s = SecureStore(context, "account").also { store = it }
-        s.get(KEY_COOKIES)?.let { parseCookieHeader(it, cookies) }
-        s.get(KEY_CLIENT_VERSION)?.let { clientVersion = it }
-        visitorData = s.get(KEY_VISITOR)
-        val name = s.get(KEY_NAME)
-        if (name != null && cookies.containsKey("SAPISID")) {
-            profile = Profile(name, s.get(KEY_HANDLE), s.get(KEY_AVATAR))
+        val accountsJson = s.get(KEY_ACCOUNTS_JSON)
+        val loadedAccounts = mutableListOf<StoredAccount>()
+
+        if (!accountsJson.isNullOrBlank()) {
+            try {
+                val array = JSONArray(accountsJson)
+                for (i in 0 until array.length()) {
+                    val obj = array.getJSONObject(i)
+                    val acc = StoredAccount(
+                        id = obj.getString("id"),
+                        profile = Profile(
+                            name = obj.getString("name"),
+                            handle = obj.optString("handle").ifBlank { null },
+                            avatar = obj.optString("avatar").ifBlank { null },
+                        ),
+                        cookieHeader = obj.getString("cookieHeader"),
+                        clientVersion = obj.optString("clientVersion", FALLBACK_CLIENT_VERSION),
+                        visitorData = obj.optString("visitorData").ifBlank { null },
+                    )
+                    loadedAccounts.add(acc)
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("Account", "Error loading multi-accounts", e)
+            }
         }
+
+        // Migration fallback for existing single-account installs
+        if (loadedAccounts.isEmpty()) {
+            val name = s.get(KEY_NAME)
+            val cookieHeader = s.get(KEY_COOKIES)
+            if (name != null && cookieHeader != null && cookieHeader.contains("SAPISID")) {
+                val p = Profile(name, s.get(KEY_HANDLE), s.get(KEY_AVATAR))
+                val id = p.handle ?: p.name
+                val legacyAcc = StoredAccount(
+                    id = id,
+                    profile = p,
+                    cookieHeader = cookieHeader,
+                    clientVersion = s.get(KEY_CLIENT_VERSION) ?: FALLBACK_CLIENT_VERSION,
+                    visitorData = s.get(KEY_VISITOR),
+                )
+                loadedAccounts.add(legacyAcc)
+            }
+        }
+
+        accounts = loadedAccounts
+        activeAccountId = s.get(KEY_ACTIVE_ID) ?: loadedAccounts.firstOrNull()?.id
+
+        val active = loadedAccounts.find { it.id == activeAccountId } ?: loadedAccounts.firstOrNull()
+        if (active != null) {
+            applyActiveAccount(active)
+        }
+    }
+
+    private fun applyActiveAccount(acc: StoredAccount) {
+        activeAccountId = acc.id
+        profile = acc.profile
+        clientVersion = acc.clientVersion
+        visitorData = acc.visitorData
+        synchronized(cookies) {
+            cookies.clear()
+            parseCookieHeader(acc.cookieHeader, cookies)
+        }
+        store?.put(KEY_ACTIVE_ID, acc.id)
+    }
+
+    fun switchAccount(acc: StoredAccount) {
+        if (activeAccountId == acc.id) return
+        applyActiveAccount(acc)
+        StreamCache.invalidateAll()
     }
 
     /** True once the WebView's cookies prove a completed YouTube sign-in. */
@@ -82,7 +163,6 @@ object Account {
             cookies.clear()
             parseCookieHeader(cookieHeader, cookies)
         }
-        persistCookies()
         refreshClientConfig()
         val menu = InnerTube.post("account/account_menu", JSONObject())
         var found: Profile? = null
@@ -96,17 +176,73 @@ object Account {
             }
         }
         val p = found ?: Profile("YouTube account", null, null)
-        store?.apply {
-            put(KEY_NAME, p.name); put(KEY_HANDLE, p.handle); put(KEY_AVATAR, p.avatar)
+        val id = p.handle ?: p.name
+
+        val newAcc = StoredAccount(
+            id = id,
+            profile = p,
+            cookieHeader = cookieHeader(),
+            clientVersion = clientVersion,
+            visitorData = visitorData,
+        )
+
+        val updated = accounts.filter { it.id != id }.toMutableList()
+        updated.add(0, newAcc)
+
+        withContext(Dispatchers.Main) {
+            accounts = updated
+            applyActiveAccount(newAcc)
         }
-        withContext(Dispatchers.Main) { profile = p }
+        saveAccountsList()
+    }
+
+    fun removeAccount(id: String) {
+        val updated = accounts.filter { it.id != id }
+        accounts = updated
+        saveAccountsList()
+
+        if (activeAccountId == id) {
+            val nextAcc = updated.firstOrNull()
+            if (nextAcc != null) {
+                switchAccount(nextAcc)
+            } else {
+                signOutAll()
+            }
+        }
+    }
+
+    fun signOutAll() {
+        synchronized(cookies) { cookies.clear() }
+        accounts = emptyList()
+        activeAccountId = null
+        profile = null
+        store?.clear()
+        android.webkit.CookieManager.getInstance().apply { removeAllCookies(null); flush() }
     }
 
     fun signOut() {
-        synchronized(cookies) { cookies.clear() }
-        store?.clear()
-        profile = null
-        android.webkit.CookieManager.getInstance().apply { removeAllCookies(null); flush() }
+        activeAccountId?.let { removeAccount(it) } ?: signOutAll()
+    }
+
+    private fun saveAccountsList() {
+        try {
+            val array = JSONArray()
+            accounts.forEach { acc ->
+                val obj = JSONObject().apply {
+                    put("id", acc.id)
+                    put("name", acc.profile.name)
+                    put("handle", acc.profile.handle ?: "")
+                    put("avatar", acc.profile.avatar ?: "")
+                    put("cookieHeader", acc.cookieHeader)
+                    put("clientVersion", acc.clientVersion)
+                    put("visitorData", acc.visitorData ?: "")
+                }
+                array.put(obj)
+            }
+            store?.put(KEY_ACCOUNTS_JSON, array.toString())
+        } catch (e: Exception) {
+            android.util.Log.e("Account", "Error saving accounts list", e)
+        }
     }
 
     /** youtube.com embeds the current web client version; requests with a stale one get odd results. */
@@ -183,6 +319,52 @@ object Account {
     private const val KEY_NAME = "name"
     private const val KEY_HANDLE = "handle"
     private const val KEY_AVATAR = "avatar"
+    private const val KEY_ACCOUNTS_JSON = "accounts_json"
+    private const val KEY_ACTIVE_ID = "active_account_id"
+}
+
+object RegionSettings {
+    private const val KEY_REGION = "content_region"
+    private var prefs: SharedPreferences? = null
+
+    val REGIONS = listOf(
+        "IN" to "India",
+        "US" to "United States",
+        "GB" to "United Kingdom",
+        "CA" to "Canada",
+        "AU" to "Australia",
+        "DE" to "Germany",
+        "FR" to "France",
+        "BR" to "Brazil",
+        "PH" to "Philippines",
+        "ID" to "Indonesia",
+        "JP" to "Japan",
+        "KR" to "South Korea",
+        "MX" to "Mexico",
+        "ES" to "Spain",
+        "IT" to "Italy",
+        "RU" to "Russia",
+        "ZA" to "South Africa",
+    )
+
+    @Volatile
+    var code: String = java.util.Locale.getDefault().country.takeIf { it.isNotBlank() && it.length == 2 }?.uppercase() ?: "US"
+        private set
+
+    fun init(context: Context) {
+        prefs = context.getSharedPreferences("region_settings", Context.MODE_PRIVATE)
+        val defaultCountry = java.util.Locale.getDefault().country.takeIf { it.isNotBlank() && it.length == 2 }?.uppercase() ?: "US"
+        code = prefs?.getString(KEY_REGION, defaultCountry) ?: defaultCountry
+    }
+
+    fun set(newCode: String) {
+        code = newCode.uppercase()
+        prefs?.edit()?.putString(KEY_REGION, code)?.apply()
+    }
+
+    fun labelFor(regionCode: String): String {
+        return REGIONS.find { it.first.equals(regionCode, ignoreCase = true) }?.second ?: regionCode
+    }
 }
 
 /**
@@ -194,24 +376,29 @@ object InnerTube {
     private const val BASE = "https://www.youtube.com/youtubei/v1/"
     private val JSON_TYPE = "application/json".toMediaType()
 
+    private fun regionCode(): String = RegionSettings.code
+
+    private fun languageCode(): String =
+        java.util.Locale.getDefault().language.takeIf { it.isNotBlank() }?.lowercase() ?: "en"
+
     /** Signed in when there's a session, otherwise anonymous (public pages like channels). */
     internal fun postAny(endpoint: String, body: JSONObject): JSONObject =
         if (Account.signedIn) post(endpoint, body) else post(endpoint, body, anonymous = true)
 
     internal fun post(endpoint: String, body: JSONObject, anonymous: Boolean = false): JSONObject {
         val auth = if (anonymous) null else Account.authorization() ?: throw NotSignedInException()
-        body.put(
-            "context",
-            JSONObject().put(
-                "client",
-                JSONObject()
-                    .put("clientName", "WEB")
-                    .put("clientVersion", Account.clientVersion())
-                    .put("hl", "en")
-                    .put("gl", "US")
-                    .apply { Account.visitorData()?.let { put("visitorData", it) } },
-            ),
-        )
+        val clientObj = JSONObject()
+            .put("clientName", "WEB")
+            .put("clientVersion", Account.clientVersion())
+            .put("hl", languageCode())
+            .put("gl", regionCode())
+
+        if (anonymous) {
+            Account.visitorData()?.let { clientObj.put("visitorData", it) }
+        }
+
+        body.put("context", JSONObject().put("client", clientObj))
+
         val request = Request.Builder()
             .url("$BASE$endpoint?prettyPrint=false")
             .post(body.toString().toRequestBody(JSON_TYPE))
@@ -223,11 +410,18 @@ object InnerTube {
             .header("X-Goog-AuthUser", "0")
             .header("X-Youtube-Client-Name", "1")
             .header("X-Youtube-Client-Version", Account.clientVersion())
-            .apply { Account.visitorData()?.let { header("X-Goog-Visitor-Id", it) } }
+            .apply {
+                if (anonymous) {
+                    Account.visitorData()?.let { header("X-Goog-Visitor-Id", it) }
+                }
+            }
             .build()
         Net.client.newCall(request).execute().use { r ->
             if (auth != null) Account.absorbSetCookies(r.headers("Set-Cookie"))
             val text = r.body?.string().orEmpty()
+            if (r.code == 429) {
+                throw Net.youtubeRateLimitFailure()
+            }
             if (r.code == 401 || r.code == 403) throw IOException("YouTube rejected the session (${r.code}). Try signing in again.")
             if (!r.isSuccessful) throw IOException("YouTube returned ${r.code}")
             return JSONObject(text)
@@ -235,6 +429,12 @@ object InnerTube {
     }
 
     // ── Reads ──────────────────────────────────────────────────────────────────
+
+    suspend fun search(query: String, continuation: String? = null): FeedPage = withContext(Dispatchers.IO) {
+        val body = if (continuation != null) JSONObject().put("continuation", continuation)
+                   else JSONObject().put("query", query)
+        parseFeed(postAny("search", body))
+    }
 
     suspend fun browse(browseId: String, continuation: String? = null): FeedPage = withContext(Dispatchers.IO) {
         val body = if (continuation != null) JSONObject().put("continuation", continuation) else JSONObject().put("browseId", browseId)
@@ -388,11 +588,22 @@ object InnerTube {
         Unit
     }
 
-    suspend fun setInWatchLater(videoId: String, add: Boolean) = withContext(Dispatchers.IO) {
+    suspend fun setInWatchLater(videoId: String, add: Boolean) = editPlaylist("WL", videoId, add)
+
+    suspend fun editPlaylist(playlistId: String, videoId: String, add: Boolean) = withContext(Dispatchers.IO) {
         val action = if (add) JSONObject().put("action", "ACTION_ADD_VIDEO").put("addedVideoId", videoId)
         else JSONObject().put("action", "ACTION_REMOVE_VIDEO_BY_VIDEO_ID").put("removedVideoId", videoId)
-        post("browse/edit_playlist", JSONObject().put("playlistId", "WL").put("actions", JSONArray().put(action)))
+        post("browse/edit_playlist", JSONObject().put("playlistId", playlistId).put("actions", JSONArray().put(action)))
         Unit
+    }
+
+    suspend fun createPlaylist(title: String, videoId: String? = null, privacy: String = "UNLISTED"): String? = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("title", title).put("privacyStatus", privacy)
+        if (videoId != null) {
+            body.put("videoIds", JSONArray().put(videoId))
+        }
+        val res = post("playlist/create", body)
+        res.optString("playlistId").ifBlank { null }
     }
 
     /** One video being watched: the tracking URL for its watch-time pings. */
@@ -465,8 +676,18 @@ object InnerTube {
                 // aren't wanted (Derek), so neither is ever shown.
                 "videoRenderer", "gridVideoRenderer", "compactVideoRenderer", "playlistVideoRenderer" ->
                     if (!isMembersOnly(obj) && !isMovie(obj)) parseVideoRenderer(obj)?.let { videos.putIfAbsent(it.id, it) }
-                "lockupViewModel" -> if (obj.optString("contentType") == "LOCKUP_CONTENT_TYPE_VIDEO" && !isMembersOnly(obj) && !isMovie(obj)) {
-                    parseLockup(obj)?.let { videos.putIfAbsent(it.id, it) }
+                "radioRenderer", "compactRadioRenderer", "playlistRadioRenderer", "mixRenderer" ->
+                    parseRadioRenderer(obj)?.let { videos.putIfAbsent(it.id, it) }
+                "lockupViewModel" -> {
+                    val contentType = obj.optString("contentType")
+                    val contentId = obj.optString("contentId")
+                    if (!isMembersOnly(obj) && !isMovie(obj)) {
+                        if (contentType == "LOCKUP_CONTENT_TYPE_MIX" || contentType == "LOCKUP_CONTENT_TYPE_PLAYLIST" || contentId.startsWith("RD")) {
+                            parseRadioRenderer(obj)?.let { videos.putIfAbsent(it.id, it) }
+                        } else if (contentType == "LOCKUP_CONTENT_TYPE_VIDEO") {
+                            parseLockup(obj)?.let { videos.putIfAbsent(it.id, it) }
+                        }
+                    }
                 }
                 // Only the feed's own "load more" item (old and new names); chip filters
                 // carry tokens too and must not be mistaken for the next page.
@@ -504,17 +725,48 @@ object InnerTube {
 
     private val CONTENT_RATING = Regex("^(G|PG|PG-13|R|NC-17|NR|TV-(Y|Y7|G|PG|14|MA))$")
 
+    private fun parseRadioRenderer(o: JSONObject): VideoItem? {
+        var videoId: String? = null
+        o.walk { key, obj ->
+            if (videoId == null && (key == "watchEndpoint" || key == "watchPlaylistEndpoint")) {
+                videoId = obj.optString("videoId").ifBlank { null }
+            }
+        }
+        if (videoId == null) {
+            videoId = o.collectStrings("videoId").firstOrNull { it.length == 11 }
+        }
+        val id = videoId ?: return null
+        val title = o.text("title") ?: "YouTube Mix"
+        val channel = o.text("shortBylineText") ?: o.text("ownerText") ?: o.text("longBylineText") ?: "YouTube Mix"
+        val thumbnail = videoThumbnailUrl(o, id)
+        val avatar = pickChannelAvatarUrl(o)
+        return VideoItem(
+            id = id,
+            title = title,
+            channel = channel,
+            channelUrl = null,
+            thumbnail = thumbnail,
+            avatar = avatar?.let { sharpenChannelAvatarUrl(absoluteUrl(it), 96) },
+            durationSec = 0L,
+            views = -1,
+            uploaded = "Mix · Infinite playlist",
+        )
+    }
+
     private fun parseVideoRenderer(o: JSONObject): VideoItem? {
         val id = o.optString("videoId").ifBlank { return null }
         val byline = o.optJSONObject("ownerText") ?: o.optJSONObject("shortBylineText") ?: o.optJSONObject("longBylineText")
         val channelRun = byline?.optJSONArray("runs")?.optJSONObject(0)
         val channelId = channelRun?.optJSONObject("navigationEndpoint")?.optJSONObject("browseEndpoint")?.optString("browseId")
+        val isLive = o.collectStrings("badgeStyle").any { it.contains("LIVE") } ||
+            o.collectStrings("style").any { it.contains("LIVE") } ||
+            o.collectStrings("text").any { it.equals("LIVE", ignoreCase = true) }
+
         val duration = o.text("lengthText")
             ?: o.optString("lengthSeconds").toLongOrNull()?.let { formatDuration(it * 1000) }
             ?: o.optJSONArray("thumbnailOverlays")?.let { arr ->
                 (0 until arr.length()).firstNotNullOfOrNull { arr.optJSONObject(it)?.optJSONObject("thumbnailOverlayTimeStatusRenderer")?.let { r -> r.text("text") } }
             }
-        // playlistVideoRenderer packs "views • age" into videoInfo runs.
         val infoRuns = o.optJSONObject("videoInfo")?.optJSONArray("runs")?.let { runs ->
             (0 until runs.length()).map { runs.optJSONObject(it).optString("text") }.filter { it.isNotBlank() && it.trim() != "•" }
         }.orEmpty()
@@ -526,9 +778,9 @@ object InnerTube {
             channelUrl = channelId?.takeIf { it.startsWith("UC") }?.let { "https://www.youtube.com/channel/$it" },
             thumbnail = videoThumbnailUrl(o, id),
             avatar = avatar?.let { sharpenChannelAvatarUrl(absoluteUrl(it), 96) },
-            durationSec = parseDuration(duration),
-            views = parseViews(o.text("viewCountText") ?: o.text("shortViewCountText") ?: infoRuns.firstOrNull { it.contains("view") }),
-            uploaded = o.text("publishedTimeText") ?: infoRuns.firstOrNull { it.contains("ago") },
+            durationSec = if (isLive) 0L else parseDuration(duration),
+            views = parseViews(o.text("viewCountText") ?: o.text("shortViewCountText") ?: infoRuns.firstOrNull { it.contains("view") || it.contains("watching") }),
+            uploaded = if (isLive) "LIVE NOW" else (o.text("publishedTimeText") ?: infoRuns.firstOrNull { it.contains("ago") }),
         )
     }
 
@@ -536,7 +788,10 @@ object InnerTube {
         val id = o.optString("contentId").ifBlank { return null }
         val meta = o.optJSONObject("metadata")?.optJSONObject("lockupMetadataViewModel") ?: return null
         val title = meta.optJSONObject("title")?.optString("content")?.ifBlank { null } ?: return null
-        // metadataRows: [ [channel], [views, age] ] as text parts.
+        val isLive = o.collectStrings("badgeStyle").any { it.contains("LIVE") } ||
+            o.collectStrings("style").any { it.contains("LIVE") } ||
+            o.collectStrings("text").any { it.equals("LIVE", ignoreCase = true) }
+
         val parts = mutableListOf<String>()
         meta.optJSONObject("metadata")?.optJSONObject("contentMetadataViewModel")?.optJSONArray("metadataRows")?.let { rows ->
             for (r in 0 until rows.length()) {
@@ -549,13 +804,13 @@ object InnerTube {
         return VideoItem(
             id = id,
             title = title,
-            channel = parts.firstOrNull { !it.contains("view") && !it.contains("ago") }.orEmpty(),
+            channel = parts.firstOrNull { !it.contains("view") && !it.contains("ago") && !it.contains("watching") }.orEmpty(),
             channelUrl = o.collectStrings("browseId").firstOrNull { it.startsWith("UC") }?.let { "https://www.youtube.com/channel/$it" },
             thumbnail = videoThumbnailUrl(o, id),
             avatar = avatar?.let { sharpenChannelAvatarUrl(absoluteUrl(it), 96) },
-            durationSec = parseDuration(duration),
-            views = parseViews(parts.firstOrNull { it.contains("view") }),
-            uploaded = parts.firstOrNull { it.contains("ago") },
+            durationSec = if (isLive) 0L else parseDuration(duration),
+            views = parseViews(parts.firstOrNull { it.contains("view") || it.contains("watching") }),
+            uploaded = if (isLive) "LIVE NOW" else parts.firstOrNull { it.contains("ago") },
         )
     }
 

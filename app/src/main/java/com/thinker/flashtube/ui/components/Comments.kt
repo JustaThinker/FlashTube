@@ -9,6 +9,13 @@ import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,6 +27,8 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp as lerpColor
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -266,19 +275,32 @@ class CommentsState(private val scope: CoroutineScope) {
     }
 }
 
-/** The card under the video: count plus the top comment. Compact modern preview. */
+/** The card under the video: comment count and a compact top-comment preview. */
 @Composable
 fun CommentsCard(state: CommentsState, onOpen: () -> Unit) {
     val c = MaterialTheme.colorScheme
+    val ambient = LocalAmbientColor.current
+    val isDark = c.surface.luminance() < 0.4f
+    val hasAmbient = AmbientMode.enabled && isDark && ambient != Color.Unspecified && ambient != c.surface
+
     val shape = RoundedCornerShape(12.dp)
+    val cardBg = if (hasAmbient) lerpColor(c.surfaceContainerLow, ambient.copy(alpha = 0.30f), 0.20f) else c.surfaceContainerLow
+    val shadowColor = if (hasAmbient) ambient else Color.Black
+
     val first = state.comments.firstOrNull()
     Column(
         modifier = Modifier
             .padding(top = 10.dp)
             .fillMaxWidth()
+            .shadow(
+                elevation = if (hasAmbient) 3.dp else 0.dp,
+                shape = shape,
+                ambientColor = shadowColor.copy(alpha = 0.45f),
+                spotColor = shadowColor.copy(alpha = 0.30f),
+            )
             .pressable(enabled = state.comments.isNotEmpty() || (Account.signedIn && !state.disabled && !state.loading), pressedScale = 0.98f, onClick = onOpen)
             .clip(shape)
-            .background(c.surfaceContainerLow)
+            .background(cardBg)
             .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -299,7 +321,7 @@ fun CommentsCard(state: CommentsState, onOpen: () -> Unit) {
                     color = c.onSurfaceVariant,
                     fontSize = 12.sp,
                     lineHeight = 16.sp,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
@@ -325,6 +347,7 @@ fun CommentsPanel(
     onClose: () -> Unit,
     creatorAvatar: String? = null,
     creatorName: String = "",
+    onSeekToTimestamp: ((Long) -> Unit)? = null,
 ) {
     val c = MaterialTheme.colorScheme
     val density = LocalDensity.current
@@ -397,7 +420,7 @@ fun CommentsPanel(
                 }
             }
         }
-        val shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+        val shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
         Column(
             Modifier
                 .align(Alignment.BottomCenter)
@@ -406,7 +429,7 @@ fun CommentsPanel(
                 .graphicsLayer { translationY = slide.value * size.height }
                 .shadow(16.dp, shape, ambientColor = Color.Black.copy(alpha = 0.18f), spotColor = Color.Black.copy(alpha = 0.22f))
                 .clip(shape)
-                .background(c.surfaceContainerLow)
+                .background(c.surface)
                 // Swallow taps so nothing underneath reacts through the panel.
                 .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } }
                 .imePadding(),
@@ -424,17 +447,18 @@ fun CommentsPanel(
                 Box(Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 6.dp), Alignment.Center) {
                     Box(Modifier.size(width = 36.dp, height = 4.dp).clip(CircleShape).background(c.onSurfaceVariant.copy(alpha = 0.45f)))
                 }
-                Row(Modifier.padding(start = 20.dp, end = 8.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Comments", fontFamily = RoundedHeavy, fontWeight = FontWeight.ExtraBold, fontSize = 21.sp)
+                Row(Modifier.padding(start = 16.dp, end = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Comments", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                     if (state.total > 0) {
                         Spacer(Modifier.width(8.dp))
-                        Text(formatCount(state.total.toLong()), color = c.onSurfaceVariant, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        Text(formatCount(state.total.toLong()), color = c.onSurfaceVariant, fontWeight = FontWeight.Medium, fontSize = 14.sp)
                     }
                     Spacer(Modifier.weight(1f))
-                    Box(Modifier.size(44.dp).pressable { close() }, contentAlignment = Alignment.Center) {
+                    Box(Modifier.size(40.dp).pressable { close() }, contentAlignment = Alignment.Center) {
                         Icon(Icons.Rounded.Close, "Close comments", tint = c.onSurfaceVariant)
                     }
                 }
+                Box(Modifier.fillMaxWidth().height(1.dp).background(c.onSurface.copy(alpha = 0.08f)))
             }
             val list = rememberLazyListState()
             val nearEnd by remember {
@@ -442,8 +466,13 @@ fun CommentsPanel(
             }
             LaunchedEffect(nearEnd) { if (nearEnd) state.loadMore() }
             LazyColumn(state = list, modifier = Modifier.weight(1f).nestedScroll(listPull)) {
+                if (state.comments.isNotEmpty() && onSeekToTimestamp != null) {
+                    item(key = "chapters_carousel") {
+                        TimelineChaptersCarousel(state.comments, onSeekToTimestamp)
+                    }
+                }
                 items(state.comments, key = { it.id }) {
-                    CommentRow(it, state, creatorAvatar, creatorName)
+                    CommentRow(it, state, creatorAvatar, creatorName, onSeekToTimestamp = onSeekToTimestamp)
                 }
                 if (state.loading || state.hasMore) item {
                     Box(Modifier.fillMaxWidth().padding(20.dp), Alignment.Center) {
@@ -550,8 +579,146 @@ private fun CreatorHeartBadge(avatarUrl: String?, name: String) {
                 .background(c.surface),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(Icons.Rounded.Favorite, "Hearted by creator", tint = c.primary, modifier = Modifier.size(9.dp))
+            Icon(Icons.Rounded.Favorite, "Hearted by creator", tint = Color(0xFFE53935), modifier = Modifier.size(9.dp))
         }
+    }
+}
+
+private val TIMESTAMP_REGEX = Regex("\\b(?:(?:(\\d{1,2}):)?(\\d{1,2}):(\\d{2}))\\b")
+
+fun parseTimestampToSeconds(text: String): Long? {
+    val parts = text.split(':').mapNotNull { it.toLongOrNull() }
+    return when (parts.size) {
+        2 -> parts[0] * 60 + parts[1]
+        3 -> parts[0] * 3600 + parts[1] * 60 + parts[2]
+        else -> null
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun CommentTextWithTimestamps(
+    text: String,
+    onSeekToTimestamp: ((Long) -> Unit)?,
+) {
+    val c = MaterialTheme.colorScheme
+    val matches = TIMESTAMP_REGEX.findAll(text).toList()
+
+    if (matches.isEmpty() || onSeekToTimestamp == null) {
+        Text(text, fontSize = 14.sp, lineHeight = 19.sp, color = c.onSurface)
+        return
+    }
+
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        var lastIdx = 0
+        matches.forEach { match ->
+            if (match.range.first > lastIdx) {
+                val segment = text.substring(lastIdx, match.range.first)
+                Text(segment, fontSize = 14.sp, lineHeight = 19.sp, color = c.onSurface)
+            }
+
+            val tsStr = match.value
+            val sec = parseTimestampToSeconds(tsStr)
+            if (sec != null) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(c.primaryContainer)
+                        .pressable { onSeekToTimestamp(sec) }
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                ) {
+                    Text(
+                        text = tsStr,
+                        fontSize = 12.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = c.onPrimaryContainer,
+                    )
+                }
+            } else {
+                Text(tsStr, fontSize = 14.sp, lineHeight = 19.sp, color = c.onSurface)
+            }
+            lastIdx = match.range.last + 1
+        }
+
+        if (lastIdx < text.length) {
+            val remaining = text.substring(lastIdx)
+            Text(remaining, fontSize = 14.sp, lineHeight = 19.sp, color = c.onSurface)
+        }
+    }
+}
+
+@Composable
+private fun TimelineChaptersCarousel(
+    comments: List<Comment>,
+    onSeekToTimestamp: (Long) -> Unit,
+) {
+    val c = MaterialTheme.colorScheme
+    val chapters = remember(comments) {
+        val list = mutableListOf<Pair<String, Long>>()
+        comments.take(15).forEach { comment ->
+            val matches = TIMESTAMP_REGEX.findAll(comment.text)
+            matches.forEach { match ->
+                val sec = parseTimestampToSeconds(match.value)
+                if (sec != null && sec > 0L) {
+                    val label = comment.text.replace(match.value, "").trim().trim('-', ':', ' ', '•')
+                    val title = if (label.isNotBlank()) label.take(25) else match.value
+                    list.add(Pair("${match.value} $title", sec))
+                }
+            }
+        }
+        list.distinctBy { it.second }.sortedBy { it.second }
+    }
+
+    if (chapters.isEmpty()) return
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
+    ) {
+        Text(
+            text = "CHAPTERS & TIMELINE",
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+            color = c.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+        )
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            items(chapters, key = { "ch-" + it.second }) { (title, sec) ->
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(c.secondaryContainer)
+                        .pressable { onSeekToTimestamp(sec) }
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Rounded.PlayArrow,
+                            contentDescription = null,
+                            tint = c.onSecondaryContainer,
+                            modifier = Modifier.size(14.dp),
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            text = title,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = c.onSecondaryContainer,
+                            maxLines = 1,
+                        )
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f))
     }
 }
 
@@ -562,20 +729,31 @@ private fun CommentRow(
     creatorAvatar: String?,
     creatorName: String,
     isReply: Boolean = false,
+    onSeekToTimestamp: ((Long) -> Unit)? = null,
 ) {
     val c = MaterialTheme.colorScheme
-    Row(Modifier.fillMaxWidth().padding(start = if (isReply) 62.dp else 20.dp, end = 20.dp, top = 10.dp, bottom = 6.dp)) {
-        ChannelAvatar(comment.avatar, comment.author, size = if (isReply) 28 else 36)
-        Spacer(Modifier.width(12.dp))
+    Row(Modifier.fillMaxWidth().padding(start = if (isReply) 56.dp else 16.dp, end = 16.dp, top = 12.dp, bottom = 6.dp)) {
+        ChannelAvatar(comment.avatar, comment.author, size = if (isReply) 28 else 40)
+        Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                 if (comment.pinned) Icon(Icons.Rounded.PushPin, "Pinned", tint = c.onSurfaceVariant, modifier = Modifier.size(14.dp))
-                Text(comment.displayName(), fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                comment.ago?.let { Text(it, color = c.onSurfaceVariant, fontSize = 12.sp, maxLines = 1) }
+                Text(comment.displayName(), fontWeight = FontWeight.Medium, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                comment.ago?.let { Text("· $it", color = c.onSurfaceVariant, fontSize = 12.sp, maxLines = 1) }
             }
-            Spacer(Modifier.height(3.dp))
-            Text(comment.text, fontSize = 14.sp, lineHeight = 20.sp)
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(5.dp))
+            CommentTextWithTimestamps(comment.text, onSeekToTimestamp)
+            if (!comment.imageUrl.isNullOrBlank()) {
+                Spacer(Modifier.height(8.dp))
+                Thumbnail(
+                    url = comment.imageUrl,
+                    modifier = Modifier
+                        .width(180.dp)
+                        .aspectRatio(16f / 9f)
+                        .clip(RoundedCornerShape(10.dp)),
+                )
+            }
+            Spacer(Modifier.height(4.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 // Like (signed in): pops like the video's like, and the count follows.
                 val isLiked = state.liked[comment.id] == true
@@ -603,7 +781,7 @@ private fun CommentRow(
                     if (creatorName.isNotBlank()) {
                         CreatorHeartBadge(creatorAvatar, creatorName)
                     } else {
-                        Icon(Icons.Rounded.Favorite, "Hearted by creator", tint = c.primary, modifier = Modifier.size(14.dp))
+                        Icon(Icons.Rounded.Favorite, "Hearted by creator", tint = Color(0xFFE53935), modifier = Modifier.size(14.dp))
                     }
                 }
                 if (Account.signedIn && !comment.id.startsWith("local-")) {

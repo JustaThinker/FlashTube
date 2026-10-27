@@ -17,6 +17,9 @@ android {
     }
 
     buildTypes {
+        debug {
+            applicationIdSuffix = ".debug"
+        }
         release {
             // Judge speed and smoothness on this build type, never on debug.
             isMinifyEnabled = true

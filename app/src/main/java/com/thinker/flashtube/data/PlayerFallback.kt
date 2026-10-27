@@ -164,8 +164,8 @@ object PlayerFallback {
             .put("deviceModel", cfg.deviceModel)
             .put("osName", cfg.osName)
             .put("osVersion", cfg.osVersion)
-            .put("hl", original?.optString("hl")?.ifEmpty { null } ?: "en")
-            .put("gl", original?.optString("gl")?.ifEmpty { null } ?: "US")
+            .put("hl", original?.optString("hl")?.ifEmpty { null } ?: java.util.Locale.getDefault().language.takeIf { it.isNotBlank() } ?: "en")
+            .put("gl", original?.optString("gl")?.ifEmpty { null } ?: java.util.Locale.getDefault().country.takeIf { it.isNotBlank() && it.length == 2 }?.uppercase() ?: "US")
 
         val body = JSONObject()
             .put("context", JSONObject().put("client", client))

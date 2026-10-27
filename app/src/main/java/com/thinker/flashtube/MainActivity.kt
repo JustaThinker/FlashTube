@@ -15,7 +15,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -28,17 +27,19 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.expandHorizontally
-import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.tappableElement
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.foundation.border
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -53,6 +54,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
@@ -61,19 +63,10 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Home
-import androidx.compose.material.icons.outlined.Subscriptions
-import androidx.compose.material.icons.outlined.VideoLibrary
-import androidx.compose.material.icons.rounded.Home
-import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material.icons.rounded.Subscriptions
-import androidx.compose.material.icons.rounded.VideoLibrary
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.foundation.Image
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -89,17 +82,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -122,18 +115,16 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-enum class Tab(val label: String, val icon: ImageVector, val selectedIcon: ImageVector) {
-    Home("Home", Icons.Outlined.Home, Icons.Rounded.Home),
-    Subscriptions("Subscriptions", Icons.Outlined.Subscriptions, Icons.Rounded.Subscriptions),
-    Library("Library", Icons.Outlined.VideoLibrary, Icons.Rounded.VideoLibrary),
+enum class Tab(val label: String) {
+    Home("Home"),
+    Subscriptions("Subscriptions"),
+    Library("Library"),
+    Downloads("Downloads"),
 }
 
-// Castii's floating stack: a 56 dp nav pill capped at 328 dp, the mini-player 8 dp above
-// it capped at 368 dp, both centered.
-// 62 dp (Derek, 2026-10-05): between Castii's 56 and Ledgii's 78. Tabs keep 50 dp targets.
-private val NavHeight = 64.dp
-private val NavWidth = 328.dp
-private val MiniWidth = 368.dp
+// Flat four-destination bar with a compact floating video popup above it.
+private val NavHeight = 60.dp
+private val MiniWidth = 200.dp
 private val MiniGap = 8.dp
 
 @Composable
@@ -157,6 +148,13 @@ fun FlashTubeApp() {
     // Bumped when the already-selected tab is tapped; that tab's list scrolls to the top.
     val scrollToTop = remember { mutableStateMapOf<Tab, Int>() }
     val reduced = rememberReducedMotion()
+
+    var miniOffsetX by remember { mutableFloatStateOf(0f) }
+    var miniOffsetY by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(player.current?.id) {
+        miniOffsetX = 0f
+        miniOffsetY = 0f
+    }
     val morph = remember { PlayerMorph(scope) { expanded -> player.expanded = expanded } }
 
     // The screen stays on while a video plays (full player, mini-player or fullscreen);
@@ -205,12 +203,12 @@ fun FlashTubeApp() {
     )
 
     // Fullscreen is whenever the open player is shown in landscape (rotation or button).
-    val activity = LocalContext.current as Activity
+    val activity = LocalContext.current as ComponentActivity
     val orientation = rememberOrientationController(activity)
     val playerOpen = player.current != null && player.expanded
     // Audio only has no picture to go fullscreen with: the open player stays portrait.
     orientation.Bind(playerOpen && !AudioOnly.enabled)
-    val pip = remember(activity) { PipController(activity as ComponentActivity) }
+    val pip = remember(activity) { PipController(activity) }
     // Closing the picture-in-picture window pauses (expanding it just comes back).
     pip.Bind(onClosed = { player.controller?.pause() })
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -251,28 +249,26 @@ fun FlashTubeApp() {
     BoxWithConstraints(Modifier.fillMaxSize().background(c.surface)) {
         // Both ends of the morph, from the same constants the mini-player and player use.
         val stageAspect = player.stageAspect
-        val geometry = remember(constraints.maxWidth, constraints.maxHeight, stackBottom, statusTop, density, stageAspect) {
+        val geometry = remember(constraints.maxWidth, constraints.maxHeight, stackBottom, statusTop, density, stageAspect, miniOffsetX, miniOffsetY) {
             with(density) {
                 val w = constraints.maxWidth.toFloat()
                 val h = constraints.maxHeight.toFloat()
                 val miniBottom = h - (stackBottom + NavHeight + MiniGap).toPx()
                 val miniW = minOf(w - 32.dp.toPx(), MiniWidth.toPx())
-                val miniLeft = (w - miniW) / 2f
-                val miniCard = Rect(miniLeft, miniBottom - MiniHeight.toPx(), miniLeft + miniW, miniBottom)
-                val thumb = Rect(
-                    Offset(miniCard.left + MiniThumbStart.toPx(), miniCard.top + (MiniHeight - MiniThumbHeight).toPx() / 2f),
-                    Size(MiniThumbWidth.toPx(), MiniThumbHeight.toPx()),
-                )
+                val miniH = miniW * 9f / 16f
+                val miniRight = w - 16.dp.toPx()
+                val baseCard = Rect(miniRight - miniW, miniBottom - miniH, miniRight, miniBottom)
+                val miniCard = baseCard.translate(miniOffsetX, miniOffsetY)
                 val side = StageSideGap.toPx()
                 val stageTop = (statusTop + StageTopGap).toPx()
                 val stage = Rect(side, stageTop, w - side, stageTop + (w - 2 * side) / stageAspect)
                 MorphGeometry(
                     screen = Size(w, h),
                     miniCard = miniCard,
-                    miniThumb = thumb,
+                    miniThumb = miniCard,
                     stage = stage,
                     miniRadius = MiniRadius.toPx(),
-                    thumbRadius = MiniThumbRadius.toPx(),
+                    thumbRadius = MiniRadius.toPx(),
                     stageRadius = StageRadius.toPx(),
                 )
             }
@@ -323,6 +319,13 @@ fun FlashTubeApp() {
                     onSearch = { openSearch = true },
                     onSignIn = { signingIn = true }, onAccount = { openSettings = true },
                     scrollToTop = scrollToTop[Tab.Library] ?: 0,
+                )
+                Tab.Downloads -> DownloadsScreen(
+                    contentPadding = contentPadding,
+                    onOpen = player::open,
+                    onSearch = { openSearch = true },
+                    onAccount = { openSettings = true },
+                    scrollToTop = scrollToTop[Tab.Downloads] ?: 0,
                 )
             }
         }
@@ -412,54 +415,35 @@ fun FlashTubeApp() {
         BottomGestureGuard(Modifier.align(Alignment.BottomCenter))
 
         if (hasMini) {
-            // Swipe up expands (the morph); swipe down follows the finger and, past a
-            // threshold or with a flick, slides the mini-player away and stops playback.
             val dismiss = remember { androidx.compose.animation.core.Animatable(0f) }
-            LaunchedEffect(player.current?.id) { dismiss.snapTo(0f) }
             val dismissDistance = with(density) { 56.dp.toPx() }
             MiniPlayer(
                 player,
                 onExpand = { player.expanded = true },
                 showVideo = !showPlayer && !showFullscreen,
                 modifier = Modifier
-                    .align(Alignment.BottomCenter)
+                    .align(Alignment.BottomEnd)
+                    .offset { IntOffset(miniOffsetX.roundToInt(), miniOffsetY.roundToInt()) }
                     .padding(start = 16.dp, end = 16.dp, bottom = stackBottom + NavHeight + MiniGap)
                     .widthIn(max = MiniWidth)
+                    .pointerInput(Unit) {
+                        detectDragGestures { change, dragAmount ->
+                            change.consume()
+                            miniOffsetX += dragAmount.x
+                            miniOffsetY += dragAmount.y
+                        }
+                    }
                     // Fades as the video grows out of it; slides and fades as it's dismissed.
                     .graphicsLayer {
                         translationY = dismiss.value
                         // Hidden for the whole morph: the shrinking page draws the mini-player
                         // itself (it stays touchable underneath, so taps still work mid-collapse).
                         alpha = (if (showPlayer) 0f else 1f) * (1f - (dismiss.value / (dismissDistance * 1.6f)).coerceIn(0f, 1f))
-                    }
-                    .draggable(
-                        state = rememberDraggableState { delta ->
-                            if (morph.progress.value <= 0f && (delta > 0f || dismiss.value > 0f)) {
-                                scope.launch { dismiss.snapTo((dismiss.value + delta).coerceAtLeast(0f)) }
-                            } else {
-                                morph.dragBy(delta)
-                            }
-                        },
-                        orientation = Orientation.Vertical,
-                        onDragStopped = { velocity ->
-                            if (dismiss.value > 0f) {
-                                if (dismiss.value > dismissDistance || velocity > 800f) {
-                                    scope.launch {
-                                        if (!reduced) dismiss.animateTo(dismissDistance * 2.2f, tween(200, easing = Motion.Emphasized))
-                                        player.close()
-                                    }
-                                } else {
-                                    scope.launch { dismiss.animateTo(0f, spring(dampingRatio = 0.7f, stiffness = 600f)) }
-                                }
-                            } else {
-                                morph.settle(velocity, reduced)
-                            }
-                        },
-                    ),
+                    },
             )
         }
 
-        NavPill(
+        MinimalMonochromeNavBar(
             selected = tab,
             onSelect = { selected ->
                 when {
@@ -478,7 +462,7 @@ fun FlashTubeApp() {
                     }
                 }
             },
-            modifier = Modifier.align(Alignment.BottomCenter).padding(start = 16.dp, end = 16.dp, bottom = stackBottom),
+            modifier = Modifier.align(Alignment.BottomCenter),
         )
 
         // The player morphs out of (and back into) the mini-player; see PlayerMorph.
@@ -502,6 +486,7 @@ fun FlashTubeApp() {
 
         when (player.sheet) {
             PlayerSheet.Quality -> QualitySheet(player, onDismiss = { player.sheet = null })
+            PlayerSheet.Subtitles -> SubtitlesSheet(player, onDismiss = { player.sheet = null })
             PlayerSheet.Settings -> PlayerSettingsSheet(player, onDismiss = { player.sheet = null })
             PlayerSheet.Comments -> Unit // a panel inside the player (PlayerScreen)
             PlayerSheet.Queue -> QueueSheet(player, onDismiss = { player.sheet = null })
@@ -536,97 +521,62 @@ private fun QueueMessage(player: PlayerState, modifier: Modifier) {
     }
 }
 
-/**
- * Castii's floating nav pill: tonal surfaceVariant with a wide, very soft shadow. The
- * active tab grows (weight 2.2) and reveals its label on a primaryContainer pill; the
- * others show their icon only. No ripple, no outline.
- */
+/** Flat four-tab navigation styled after docs/design/navbar-concept.svg. */
 @Composable
-private fun NavPill(selected: Tab, onSelect: (Tab) -> Unit, modifier: Modifier = Modifier) {
+private fun MinimalMonochromeNavBar(
+    selected: Tab,
+    onSelect: (Tab) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val c = MaterialTheme.colorScheme
     val view = LocalView.current
     val reduced = rememberReducedMotion()
-    val shape = RoundedCornerShape(32.dp)
-
     Surface(
-        modifier = modifier
-            .widthIn(max = NavWidth)
-            .height(NavHeight)
-            .fillMaxWidth()
-            .shadow(
-                elevation = 16.dp,
-                shape = shape,
-                clip = false,
-                ambientColor = Color.Black.copy(alpha = 0.20f),
-                spotColor = Color.Black.copy(alpha = 0.30f),
-            ),
-        shape = shape,
-        color = c.surfaceContainerHigh,
-        tonalElevation = 6.dp,
+        modifier = modifier.fillMaxWidth(),
+        shape = androidx.compose.ui.graphics.RectangleShape,
+        color = c.surface,
+        tonalElevation = 0.dp,
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 6.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Tab.entries.forEach { t ->
-                val active = t == selected
-                val contentColor by animateColorAsState(
-                    if (active) c.onSurface else c.onSurfaceVariant,
-                    animationSpec = tween(180),
-                    label = "tabContentColor",
-                )
-                val pillColor by animateColorAsState(
-                    if (active) c.onSurface.copy(alpha = 0.12f) else Color.Transparent,
-                    animationSpec = tween(180),
-                    label = "tabPillColor",
-                )
-                val iconScale by animateFloatAsState(
-                    if (active) 1.08f else 1.0f,
-                    animationSpec = if (reduced) snap() else spring(dampingRatio = 0.65f, stiffness = 450f),
-                    label = "iconScale",
-                )
-                val interaction = remember(t) { MutableInteractionSource() }
+        Box {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .height(NavHeight)
+                    .padding(vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Tab.entries.forEach { t ->
+                    val active = t == selected
+                    val activeContentColor by animateColorAsState(
+                        targetValue = if (active) c.onSurface else c.onSurfaceVariant,
+                        animationSpec = if (reduced) snap() else tween(180, easing = Motion.Emphasized),
+                        label = "activeContentColor",
+                    )
+                    val interaction = remember(t) { MutableInteractionSource() }
 
-                Surface(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                        .clickable(interactionSource = interaction, indication = null) {
-                            view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
-                            onSelect(t)
-                        },
-                    shape = RoundedCornerShape(24.dp),
-                    color = pillColor,
-                    contentColor = contentColor,
-                ) {
                     Box(
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .clickable(interactionSource = interaction, indication = null) {
+                                view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                                onSelect(t)
+                            },
                         contentAlignment = Alignment.Center,
                     ) {
                         Column(
-                            modifier = Modifier.padding(top = 2.5.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.Center,
                         ) {
-                            Icon(
-                                if (active) t.selectedIcon else t.icon,
-                                contentDescription = t.label,
-                                tint = contentColor,
-                                modifier = Modifier
-                                    .size(22.dp)
-                                    .graphicsLayer {
-                                        scaleX = iconScale
-                                        scaleY = iconScale
-                                    },
-                            )
+                            NavDestinationIcon(t, active, activeContentColor, Modifier.size(24.dp))
+                            Spacer(Modifier.height(2.dp))
                             Text(
-                                t.label,
-                                color = contentColor,
-                                fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
-                                fontSize = 10.sp,
+                                text = t.label,
+                                color = activeContentColor,
+                                fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
+                                fontSize = 11.sp,
                                 maxLines = 1,
                                 softWrap = false,
                             )
@@ -634,6 +584,29 @@ private fun NavPill(selected: Tab, onSelect: (Tab) -> Unit, modifier: Modifier =
                     }
                 }
             }
+            Box(
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .height(0.5.dp)
+                    .background(c.outlineVariant.copy(alpha = 0.12f)),
+            )
         }
     }
+}
+
+@Composable
+private fun NavDestinationIcon(tab: Tab, active: Boolean, color: Color, modifier: Modifier = Modifier) {
+    val icon = when (tab) {
+        Tab.Home -> if (active) R.drawable.ic_nav_home_filled else R.drawable.ic_nav_home_outline
+        Tab.Subscriptions -> R.drawable.ic_nav_subscriptions
+        Tab.Library -> R.drawable.ic_nav_library
+        Tab.Downloads -> R.drawable.ic_nav_downloads
+    }
+    Image(
+        painter = painterResource(icon),
+        contentDescription = null,
+        colorFilter = ColorFilter.tint(color),
+        modifier = modifier.size(if (tab == Tab.Home) 21.dp else 23.dp),
+    )
 }

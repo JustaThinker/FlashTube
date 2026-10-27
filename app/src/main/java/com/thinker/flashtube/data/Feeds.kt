@@ -27,9 +27,66 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import android.content.Context
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+
+/** Persistent store for seen video IDs so recommendations don't repeat across launches. */
+object SeenStore {
+    private const val PREFS_NAME = "seen_videos_prefs"
+    private const val KEY_SEEN = "seen_ids"
+    private const val MAX_SEEN = 500
+
+    private val prefs by lazy {
+        FlashTubeApplication.appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    }
+
+    private val lock = Any()
+    private var loaded = false
+    private val set = LinkedHashSet<String>()
+
+    fun load(): HashSet<String> = synchronized(lock) {
+        if (!loaded) {
+            val raw = runCatching { prefs.getString(KEY_SEEN, null) }.getOrNull()
+            if (!raw.isNullOrBlank()) {
+                raw.split(",").map { it.trim() }.filter { it.isNotEmpty() }.forEach { set.add(it) }
+            }
+            loaded = true
+        }
+        HashSet(set)
+    }
+
+    fun addAll(ids: Collection<String>) = synchronized(lock) {
+        load()
+        var changed = false
+        for (id in ids) {
+            if (id.isNotBlank()) {
+                set.remove(id)
+                set.add(id)
+                changed = true
+            }
+        }
+        while (set.size > MAX_SEEN) {
+            val first = set.iterator().next()
+            set.remove(first)
+            changed = true
+        }
+        if (changed) {
+            runCatching {
+                prefs.edit().putString(KEY_SEEN, set.joinToString(",")).apply()
+            }
+        }
+    }
+
+    fun clear() = synchronized(lock) {
+        set.clear()
+        loaded = true
+        runCatching {
+            prefs.edit().remove(KEY_SEEN).apply()
+        }
+    }
+}
 
 /** A pageable list of videos from the signed-in account (home, subscriptions, history, a playlist). */
 @Stable
@@ -57,8 +114,8 @@ class FeedState(
         private set
     private var next: String? = null
     private var loaded = false
-    /** Ids already put in front of the user this session (fresh-refresh feeds only). */
-    private val shown = HashSet<String>()
+    /** Ids already put in front of the user across sessions (fresh-refresh feeds only). */
+    private val shown = if (freshOnRefresh) SeenStore.load() else HashSet()
     private var job: Job? = null
     val hasMore get() = next != null
 
@@ -74,7 +131,11 @@ class FeedState(
             runCatching { if (freshOnRefresh && shown.isNotEmpty()) loadFresh() else loader(null) }
                 .onSuccess {
                     videos = it.videos; next = it.next; generation++
-                    if (freshOnRefresh) it.videos.forEach { v -> shown += v.id }
+                    if (freshOnRefresh) {
+                        val ids = it.videos.map { v -> v.id }
+                        shown += ids
+                        SeenStore.addAll(ids)
+                    }
                 }
                 .onFailure { error = friendly(it) }
             loading = false
@@ -92,7 +153,11 @@ class FeedState(
                     val seen = videos.mapTo(HashSet()) { it.id }
                     val added = page.videos.filter { seen.add(it.id) }
                     videos = videos + added
-                    if (freshOnRefresh) added.forEach { v -> shown += v.id }
+                    if (freshOnRefresh) {
+                        val ids = added.map { v -> v.id }
+                        shown += ids
+                        SeenStore.addAll(ids)
+                    }
                     next = page.next
                 }
                 .onFailure { error = friendly(it) }
@@ -120,15 +185,20 @@ class FeedState(
         return FeedPage(fresh.values.toList(), token)
     }
 
+
+
     fun reset() {
         job?.cancel()
-        shown.clear()
+        if (freshOnRefresh) {
+            shown.clear()
+            shown += SeenStore.load()
+        }
         videos = emptyList(); next = null; loaded = false; loading = false; error = null
     }
 
     private companion object {
-        const val FRESH_TARGET = 16
-        const val FRESH_PAGES = 5
+        const val FRESH_TARGET = 30
+        const val FRESH_PAGES = 10
     }
 
     private fun friendly(t: Throwable) = when (t) {
@@ -155,7 +225,8 @@ class LibraryData(scope: CoroutineScope) {
 
     fun playlistFeed(id: String) = FeedState(scope) {
         if (id == "DL") {
-            FeedPage(emptyList(), null)
+            val downloadedItems = Downloads.tasks.filter { it.status == DownloadStatus.Complete }.map { it.toVideoItem() }
+            FeedPage(downloadedItems, null)
         } else {
             InnerTube.playlist(id, it)
         }

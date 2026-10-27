@@ -6,31 +6,28 @@ No ads. Use it signed out, or sign in with Google to get your personalized recom
 subscriptions feed, watch history, and playlists with full likes, subscribes, and watch history sync.
 Sponsor segments are automatically skipped with [SponsorBlock](https://sponsor.ajay.app).
 
+---
 
-
-## Download
-
-**[FlashTube Release APK](https://github.com/JustaThinker/flashtube/raw/main/app/release/app-release.apk)**: Always the latest release build. Open the file on your Android device and allow installation from your browser or file manager.
-
-## Features
+## 🌟 Key Features
 
 - **Ad-Free Playback:** Stream YouTube videos with zero ads or interruptions.
-- **High-Quality Streaming:** Up to 1080p / 60fps streaming using generated DASH manifests to bypass YouTube throttling.
-- **Overlay Player Controls:** Quick ±10s double-tap seek, interactive scrubber, play/pause shape morphing, and auto-hiding gesture controls.
-- **Seamless Mini-Player:** Morphing transition between full watch screen and floating mini-player. Swipe down to minimize, swipe up to expand.
-- **Zoom to Fill & Aspect Ratio:** Pinch to zoom or toggle aspect mode to eliminate side black bars on ultrawide displays.
-- **Background Audio & PiP:** Picture-in-Picture mode and background audio playback with media notification controls.
+- **High-Quality Streaming & 4K Downloads:** Up to 4K (2160p) / 1440p / 1080p streaming and fast parallel chunk downloading with on-device hardware MediaMuxer.
+- **Draggable Floating Mini-Player:** Seamless morphing transition between watch screen and a 2D floating mini-player you can position anywhere on screen.
+- **Overlay Player Controls:** Quick ±10s double-tap seek, smooth edge gesture controls for brightness and volume, play/pause shape morphing, and auto-hiding controls.
+- **Multi-Language Audio Tracks (Dubs) & Closed Captions:** 1-tap switching between multi-language YouTube audio tracks (English, Hindi, Spanish, etc.) and closed caption tracks.
+- **Interactive Comment Timestamps & Timeline Chapters Carousel:** Tapping timestamps in comments instantly seeks the player, plus a horizontal slideshow carousel of chapters.
 - **SponsorBlock Integration:** Automatically skip sponsor segments, self-promotions, intros/outros, and filler content with customizable skip actions.
-- **Google Sign-In & Full Sync (Optional):** Access personalized Home recommendations, Subscriptions, History, Liked Videos, and Playlists. Account data stays encrypted using Android Keystore.
-- **Comments & Replies:** View and post comments with real-time reply threads.
-- **Downloads Section:** Built-in Downloads screen in Library for local offline content.
-- **Custom Themes & Material You:** Dynamic wallpaper colors (Material You) with dark/light mode themes and custom accent palettes.
+- **Location & Content Region Selection:** Select your preferred content location (India, United States, United Kingdom, Canada, Australia, etc.) in Settings.
+- **Google Sign-In & Multi-Account Support:** Access personalized Home recommendations, Subscriptions, History, Liked Videos, and Playlists with 1-tap multi-account switching. Encrypted using Android Keystore.
+- **Live Stream Badges & YouTube Mix Playlists:** Red LIVE badges on live stream thumbnails and support for infinite procedural YouTube Mix playlists (`RD...`).
 
-## Building
+---
+
+## 🛠️ Building
 
 ### Requirements
 - Android SDK (`compileSdk 36`, `minSdk 26`)
-- JDK 17+ (Android Studio's bundled Java SDK works)
+- JDK 21+ (Android Studio's bundled Java SDK works)
 
 ### Gradle Commands
 
@@ -42,37 +39,17 @@ Sponsor segments are automatically skipped with [SponsorBlock](https://sponsor.a
 ./gradlew assembleRelease
 ```
 
-The compiled release APK will be located at `app/release/app-release.apk`.
+---
 
-## Project Structure
-
-```
-app/src/main/java/com/thinker/flashtube/
-  YouTube.kt                 Search + video details (NewPipeExtractor), stream cache
-  PlaybackService.kt         Media3 session service, DASH manifest generator
-  PlayerState.kt             UI playback state manager over MediaController
-  PlayerUi.kt                Watch screen layout, overlay controls, mini-player
-  VideoView.kt               Video surface, fullscreen player, scrubber, playback sheets
-  MainActivity.kt            App shell, tab navigation, floating nav dock
-  Screens.kt                 Home, Subscriptions, Search, Library screens
-  SettingsScreen.kt          App settings & appearance customization
-  PlayerFallback.kt          BotGuard & player fallback handler for rate-limits
-  FlashtubePoTokenProvider.kt PO Token minter integration for NewPipeExtractor
-  potoken/                   BotGuard PO token WebView minter engine
-  Account.kt & InnerTube.kt  Google account authentication and InnerTube API client
-  SponsorBlock.kt            SponsorBlock segment skipper and settings
-  UiKit.kt, Theme.kt, Net.kt Shared UI components, color palettes, and OkHttp client
-```
-
-## Credits & Dependencies
+## 📚 Credits & Dependencies
 
 - [NewPipeExtractor](https://github.com/TeamNewPipe/NewPipeExtractor): YouTube extraction engine (GPL-3.0)
 - [AndroidX Media3](https://github.com/androidx/media): Audio & video player framework (ExoPlayer)
 - [Coil](https://github.com/coil-kt/coil): Image loading framework
 - [SponsorBlock](https://sponsor.ajay.app): Crowd-sourced sponsor segment skipping
 
-## License
+---
+
+## 📄 License
 
 FlashTube is licensed under [GPL-3.0](LICENSE).
-
-*Disclaimer: FlashTube is an independent open-source project and is not affiliated with, sponsored by, or endorsed by Google or YouTube.*

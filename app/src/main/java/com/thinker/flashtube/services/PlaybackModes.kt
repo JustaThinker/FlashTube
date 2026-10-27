@@ -93,3 +93,26 @@ object AudioOnly {
 
     fun toggle() = set(!enabled)
 }
+
+/**
+ * Ambient mode: dynamic lighting around the player matching the live video content.
+ */
+object AmbientMode {
+    private const val KEY = "ambient_lighting"
+    private var prefs: SharedPreferences? = null
+
+    var enabled by mutableStateOf(true)
+        private set
+
+    fun init(context: Context) {
+        prefs = context.getSharedPreferences("playback", Context.MODE_PRIVATE)
+        enabled = prefs?.getBoolean(KEY, true) ?: true
+    }
+
+    fun set(on: Boolean) {
+        enabled = on
+        prefs?.edit()?.putBoolean(KEY, on)?.apply()
+    }
+
+    fun toggle() = set(!enabled)
+}

@@ -146,8 +146,21 @@ fun SignInScreen(onDone: () -> Unit, onCancel: () -> Unit) {
 /** Search + account in the main tab headers (search left of the avatar). */
 @Composable
 fun HeaderActions(onSearch: () -> Unit, onAccount: () -> Unit) {
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-        CircleAction(Icons.Rounded.Search, "Search", onSearch)
+    val c = MaterialTheme.colorScheme
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier
+                .pressable(onClick = onSearch)
+                .padding(4.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Search,
+                contentDescription = "Search",
+                tint = c.onSurface,
+                modifier = Modifier.size(27.dp),
+            )
+        }
         AccountAction(onAccount)
     }
 }
@@ -157,10 +170,10 @@ fun HeaderActions(onSearch: () -> Unit, onAccount: () -> Unit) {
 fun AccountAction(onClick: () -> Unit) {
     val profile = Account.profile
     if (profile == null) {
-        CircleAction(Icons.Rounded.AccountCircle, "Sign in", onClick)
+        CircleAction(Icons.Rounded.AccountCircle, "Sign in", onClick, size = 32.dp, iconSize = 18.dp)
     } else {
-        Box(Modifier.size(44.dp).pressable(onClick = onClick), contentAlignment = Alignment.Center) {
-            ChannelAvatar(profile.avatar, profile.name, size = 40)
+        Box(Modifier.size(32.dp).pressable(onClick = onClick), contentAlignment = Alignment.Center) {
+            ChannelAvatar(profile.avatar, profile.name, size = 30)
         }
     }
 }

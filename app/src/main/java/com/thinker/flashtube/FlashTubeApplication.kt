@@ -29,19 +29,25 @@ class FlashTubeApplication : Application(), ImageLoaderFactory {
         // The iOS client only adds HLS livestream formats; Flashtube plays VOD, so skip that request.
         YoutubeStreamExtractor.setFetchIosClient(false)
         ThemeSettings.init(this)
+        RegionSettings.init(this)
         QualityPreference.init(this)
         PlaybackSpeed.init(this)
         AudioOnly.init(this)
+        AmbientMode.init(this)
         ResumeStore.init(this)
         Account.init(this)
         SponsorBlock.init(this)
         SearchHistory.init(this)
+        Downloads.init(this)
         // Stream URLs are bound to the network they were fetched on: forget them on a switch.
         getSystemService(android.net.ConnectivityManager::class.java)?.registerDefaultNetworkCallback(
             object : android.net.ConnectivityManager.NetworkCallback() {
                 private var last: android.net.Network? = null
                 override fun onAvailable(network: android.net.Network) {
-                    if (last != null && last != network) StreamCache.invalidateAll()
+                    if (last != null && last != network) {
+                        StreamCache.invalidateAll()
+                        Net.onNetworkChanged()
+                    }
                     last = network
                 }
             },

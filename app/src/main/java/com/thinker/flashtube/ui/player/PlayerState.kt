@@ -17,6 +17,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
@@ -89,6 +90,51 @@ class PlayerState(private val scope: CoroutineScope) {
         player.repeatMode = next
         loopEnabled = next == Player.REPEAT_MODE_ONE
         actionMessage = if (loopEnabled) "Loop on" else "Loop off"
+    }
+
+    var selectedSubtitleLanguage by mutableStateOf<String?>(null)
+        private set
+
+    fun setSubtitleLanguage(code: String?) {
+        selectedSubtitleLanguage = code
+        val p = controller ?: return
+        try {
+            if (code == null) {
+                p.trackSelectionParameters = p.trackSelectionParameters
+                    .buildUpon()
+                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                    .build()
+                actionMessage = "Captions off"
+            } else {
+                p.trackSelectionParameters = p.trackSelectionParameters
+                    .buildUpon()
+                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                    .setPreferredTextLanguage(code)
+                    .build()
+                actionMessage = "Captions on"
+            }
+        } catch (e: Exception) {
+            Log.e("PlayerState", "Error setting subtitle language", e)
+        }
+    }
+
+    var selectedAudioLanguage by mutableStateOf<String?>(null)
+        private set
+
+    fun setAudioLanguage(code: String?) {
+        selectedAudioLanguage = code
+        val p = controller ?: return
+        try {
+            if (code != null) {
+                p.trackSelectionParameters = p.trackSelectionParameters
+                    .buildUpon()
+                    .setPreferredAudioLanguage(code)
+                    .build()
+                actionMessage = "Audio track updated"
+            }
+        } catch (e: Exception) {
+            Log.e("PlayerState", "Error setting audio language", e)
+        }
     }
     var speedPanelOpen by mutableStateOf(false)
     /** Finger is held for temporary 2× playback. */
@@ -182,6 +228,27 @@ class PlayerState(private val scope: CoroutineScope) {
      */
     private var openedAt = 0L
 
+    var loadingMoreRelated by mutableStateOf(false)
+        private set
+
+    fun loadMoreRelated() {
+        val token = details?.relatedToken ?: return
+        if (loadingMoreRelated) return
+        loadingMoreRelated = true
+        scope.launch {
+            runCatching { YouTube.nextRelated(token) }
+                .onSuccess { page ->
+                    val curr = details ?: return@onSuccess
+                    val seen = curr.related.mapTo(HashSet()) { it.id }
+                    val added = page.videos.filter { seen.add(it.id) }
+                    details = curr.copy(related = curr.related + added, relatedToken = page.next)
+                    added.forEach { known[it.id] = it }
+                }
+                .onFailure { Log.w(TAG, "Error loading more related videos", it) }
+            loadingMoreRelated = false
+        }
+    }
+
     private fun show(item: VideoItem, startPlayback: Boolean) {
         endHoldSpeed()
         openedAt = android.os.SystemClock.elapsedRealtime()
@@ -202,6 +269,7 @@ class PlayerState(private val scope: CoroutineScope) {
         inWatchLater = false
         speedPanelOpen = false
         videoZoom = 1f
+        loadingMoreRelated = false
         if (Account.signedIn) {
             scope.launch {
                 runCatching { InnerTube.videoState(item.id) }
@@ -789,6 +857,6 @@ fun rememberPlayerState(): PlayerState {
     return state
 }
 
-enum class PlayerSheet { Quality, Comments, Queue, Settings }
+enum class PlayerSheet { Quality, Comments, Queue, Settings, Subtitles }
 
 private const val TAG = "FlashTube"

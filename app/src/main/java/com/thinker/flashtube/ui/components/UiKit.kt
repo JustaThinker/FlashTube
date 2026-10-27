@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -43,6 +45,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -109,7 +112,8 @@ fun ScreenHeader(
         modifier = Modifier
             .fillMaxWidth()
             .statusBarsPadding()
-            .padding(horizontal = ScreenHeaderHorizontal, vertical = 8.dp),
+            .heightIn(min = 56.dp)
+            .padding(horizontal = ScreenHeaderHorizontal, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (brandMark) {
@@ -121,11 +125,11 @@ fun ScreenHeader(
             modifier = Modifier.weight(1f),
             fontFamily = RoundedHeavy,
             fontWeight = FontWeight.Bold,
-            fontSize = 22.sp,
+            fontSize = 20.sp,
             letterSpacing = (-0.5).sp,
             maxLines = 1,
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { actions() }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { actions() }
     }
 }
 
@@ -140,7 +144,8 @@ fun BackScreenHeader(
         modifier = modifier
             .fillMaxWidth()
             .statusBarsPadding()
-            .padding(horizontal = ScreenHeaderHorizontal, vertical = 6.dp),
+            .heightIn(min = 56.dp)
+            .padding(horizontal = ScreenHeaderHorizontal, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         CircleAction(Icons.AutoMirrored.Rounded.ArrowBack, "Back", onBack)
@@ -151,30 +156,37 @@ fun BackScreenHeader(
 
 @Composable
 fun BrandMark() {
-    val c = MaterialTheme.colorScheme
+    val brandRed = Color(0xFFFF0033)
     Box(
         modifier = Modifier
-            .size(width = 34.dp, height = 24.dp)
+            .size(width = 36.dp, height = 26.dp)
             .clip(RoundedCornerShape(8.dp))
-            .background(Brush.linearGradient(listOf(c.primary, c.primary.copy(alpha = 0.85f)))),
+            .background(Brush.linearGradient(listOf(brandRed, Color(0xFFCC0029)))),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(Icons.Rounded.FastForward, contentDescription = null, tint = c.onPrimary, modifier = Modifier.size(16.dp))
+        Icon(Icons.Rounded.FastForward, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
     }
 }
 
 @Composable
-fun CircleAction(icon: ImageVector, contentDescription: String, onClick: () -> Unit) {
+fun CircleAction(
+    icon: ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    size: Dp = 38.dp,
+    iconSize: Dp = 20.dp,
+) {
     val c = MaterialTheme.colorScheme
     Box(
-        modifier = Modifier
-            .size(38.dp)
+        modifier = modifier
+            .size(size)
             .pressable(onClick = onClick)
             .clip(CircleShape)
             .background(c.surfaceContainerHigh),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, contentDescription, tint = c.onSurface, modifier = Modifier.size(20.dp))
+        Icon(icon, contentDescription, tint = c.onSurface, modifier = Modifier.size(iconSize))
     }
 }
 
@@ -262,9 +274,26 @@ fun Thumbnail(url: String?, modifier: Modifier = Modifier, radius: Int = 22, vid
 }
 
 @Composable
-fun DurationPill(seconds: Long, modifier: Modifier = Modifier, small: Boolean = false) {
-    if (seconds <= 0) return
+fun DurationPill(seconds: Long, modifier: Modifier = Modifier, small: Boolean = false, isLive: Boolean = false) {
     val fontSize = if (small) 10.5.sp else 11.5.sp
+    if (isLive || seconds <= 0L) {
+        Box(
+            modifier = modifier
+                .clip(RoundedCornerShape(4.dp))
+                .background(Color(0xFFE53935))
+                .padding(horizontal = if (small) 5.dp else 6.dp, vertical = if (small) 1.dp else 2.dp),
+        ) {
+            Text(
+                "LIVE",
+                color = Color.White,
+                fontSize = fontSize,
+                lineHeight = fontSize,
+                fontWeight = FontWeight.ExtraBold,
+            )
+        }
+        return
+    }
+
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(4.dp))
@@ -291,8 +320,8 @@ fun ChannelAvatar(
     name: String,
     size: Int = 40,
     selected: Boolean = false,
-    /** Reserve space for a selection ring so layout does not shift when [selected] toggles. */
     ringSlot: Boolean = false,
+    isLive: Boolean = false,
 ) {
     val c = MaterialTheme.colorScheme
     val density = LocalDensity.current
@@ -300,25 +329,48 @@ fun ChannelAvatar(
         (size.dp.value * density.density * 2f).roundToInt().coerceIn(88, 240)
     }
     val model = remember(url, minPx) { url?.let { sharpenChannelAvatarUrl(normalizeChannelAvatarUrl(it), minPx) } }
-    val outer = if (ringSlot) (size + 4).dp else size.dp
+    val outer = if (ringSlot || isLive) (size + 6).dp else size.dp
+
     Box(modifier = Modifier.size(outer), contentAlignment = Alignment.Center) {
-        if (selected) {
+        if (isLive) {
+            Box(Modifier.fillMaxSize().border(2.dp, Color(0xFFE53935), CircleShape))
+        } else if (selected) {
             Box(Modifier.fillMaxSize().border(2.dp, Color.White, CircleShape))
         }
-    Box(
-        modifier = Modifier.size(size.dp).clip(if (url != null) CircleShape else CookieShape).background(c.tertiaryContainer),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            name.trim().trimStart('@').take(1).uppercase(),
-            color = c.onTertiaryContainer,
-            fontWeight = FontWeight.Black,
-            fontSize = (size * 0.4f).sp,
-        )
-        if (model != null) {
-            AsyncImage(model = model, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(size.dp))
+
+        Box(
+            modifier = Modifier.size(size.dp).clip(if (url != null) CircleShape else CookieShape).background(c.tertiaryContainer),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                name.trim().trimStart('@').take(1).uppercase(),
+                color = c.onTertiaryContainer,
+                fontWeight = FontWeight.Black,
+                fontSize = (size * 0.4f).sp,
+            )
+            if (model != null) {
+                AsyncImage(model = model, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(size.dp))
+            }
         }
-    }
+
+        if (isLive) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .offset(y = 2.dp)
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(Color(0xFFE53935))
+                    .padding(horizontal = 4.dp, vertical = 1.dp),
+            ) {
+                Text(
+                    text = "LIVE",
+                    color = Color.White,
+                    fontSize = 8.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    lineHeight = 8.sp,
+                )
+            }
+        }
     }
 }
 

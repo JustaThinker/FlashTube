@@ -6,6 +6,7 @@ import androidx.compose.runtime.Immutable
 import androidx.core.text.HtmlCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import org.schabi.newpipe.extractor.Image
 import org.schabi.newpipe.extractor.MediaFormat
 import org.schabi.newpipe.extractor.channel.ChannelInfo
@@ -49,6 +50,7 @@ data class VideoItem(
     val durationSec: Long,
     val views: Long,
     val uploaded: String?,
+    val localUri: String? = null,
 )
 
 /** `UC…` from a `…/channel/UC…` URL, when InnerTube set [channelUrl]. */
@@ -71,6 +73,7 @@ data class VideoDetails(
     val dislikes: Long = -1L,   // from returnyoutubedislike.com; -1 = not loaded yet
     val subscribers: Long,
     val related: List<VideoItem>,
+    val relatedToken: String? = null,
     val playable: Boolean,
     /** Height of the chosen stream, e.g. "1080p". */
     val quality: String?,
@@ -95,6 +98,7 @@ data class ChannelDetails(
     val verified: Boolean = false,
     val description: String,
     val videosTab: ListLinkHandler?,
+    val isLive: Boolean = false,
 )
 
 fun ChannelDetails.withHeader(header: ChannelHeaderMeta): ChannelDetails = copy(
@@ -124,6 +128,7 @@ data class Comment(
     val repliesToken: String?,
     /** Liked by the signed-in account (from YouTube's toolbar state). */
     val liked: Boolean = false,
+    val imageUrl: String? = null,
 )
 
 @Immutable
@@ -144,11 +149,12 @@ object YouTube {
         FeedPage(videos, next)
     }
 
-    suspend fun search(query: String): List<VideoItem> = withContext(Dispatchers.IO) {
-        val handler = service.searchQHFactory.fromQuery(query, listOf(YoutubeSearchQueryHandlerFactory.VIDEOS), "")
-        SearchInfo.getInfo(service, handler).relatedItems
-            .filterIsInstance<StreamInfoItem>()
-            .mapNotNull { it.toVideoItem() }
+    suspend fun search(query: String, continuation: String? = null): FeedPage = withContext(Dispatchers.IO) {
+        InnerTube.search(query, continuation)
+    }
+
+    suspend fun nextRelated(continuation: String): FeedPage = withContext(Dispatchers.IO) {
+        InnerTube.parseFeed(InnerTube.postAny("next", JSONObject().put("continuation", continuation)))
     }
 
     suspend fun searchSuggestions(query: String): List<String> = withContext(Dispatchers.IO) {
@@ -272,10 +278,11 @@ object YouTube {
 
     /** Turns extractor failures into a sentence a person can act on. */
     fun friendlyError(t: Throwable): String = when (t) {
+        is YouTubeRateLimitException -> t.message ?: "YouTube is temporarily rate-limiting requests. Please wait before retrying."
         is AgeRestrictedContentException -> "This video is age-restricted and needs a YouTube account to watch."
         is GeographicRestrictionException -> "This video isn't available in your country."
         is org.schabi.newpipe.extractor.exceptions.SignInConfirmNotBotException ->
-            "YouTube is temporarily rate-limiting this request. Note: Logging into your account won't fix this — try again in a few minutes or switch networks."
+            "YouTube is temporarily rate-limiting requests. Please wait a few minutes before retrying."
         is org.schabi.newpipe.extractor.exceptions.PrivateContentException -> "This video is private."
         // Members-only videos (e.g. "Insider Edition") need a channel membership; FlashTube's
         // stream extraction is anonymous, so it can't play them even when you're a member.
@@ -283,7 +290,7 @@ object YouTube {
             if (t.message.orEmpty().contains("member", ignoreCase = true) || t is org.schabi.newpipe.extractor.exceptions.PaidContentException)
                 "This is a members-only video. FlashTube can't play members-only videos yet."
             else "This video isn't available."
-        is ReCaptchaException -> "YouTube is rate-limiting requests right now. Try again in a minute."
+        is ReCaptchaException -> "YouTube is temporarily rate-limiting requests. Please wait a few minutes before retrying."
         is IOException -> "Couldn't reach YouTube. Check your connection."
         else -> "Something went wrong loading this. Try again."
     }
@@ -403,8 +410,8 @@ object StreamSelection {
     /** Above this tier, phones gain little and pay a lot in data. */
     private const val MAX_TIER = 1080
 
-    data class Picked(val video: VideoStream?, val audio: AudioStream?, val muxed: VideoStream?) {
-        val isPlayable get() = (video != null && audio != null) || muxed != null
+    data class Picked(val video: VideoStream?, val audio: AudioStream?, val muxed: VideoStream?, val isLive: Boolean = false) {
+        val isPlayable get() = (video != null && audio != null) || muxed != null || isLive
         /** What will actually play: the separate streams, or the combined fallback. */
         val usesSeparate get() = video != null && audio != null
         /** Quality label tier (1080p, not the ultrawide pixel height). */
@@ -412,6 +419,9 @@ object StreamSelection {
     }
 
     fun pick(info: StreamInfo): Picked {
+        if (!info.hlsUrl.isNullOrBlank() || info.streamType == StreamType.LIVE_STREAM) {
+            return Picked(video = null, audio = null, muxed = null, isLive = true)
+        }
         // H.264 first: every device decodes it in hardware. VP9 next, anything else last.
         fun formatRank(format: MediaFormat?) = when (format) {
             MediaFormat.MPEG_4 -> 0
@@ -548,18 +558,19 @@ internal fun upscaleGgphtThumbnail(url: String, targetWidth: Int): String {
 // ── Return YouTube Dislike ────────────────────────────────────────────────────
 
 /**
- * Fetches the real dislike count from returnyoutubedislike.com (RYD).
- * Returns -1 on failure so the caller can hide the field gracefully.
+ * Fetches the real dislike count from returnyoutubedislikeapi.com (RYD).
+ * Returns -1 on failure so the caller can handle gracefully.
  */
 fun fetchDislikeCount(videoId: String): Long {
     return runCatching {
         val req = okhttp3.Request.Builder()
-            .url("https://returnyoutubedislike.com/votes?videoId=$videoId")
+            .url("https://returnyoutubedislikeapi.com/votes?videoId=$videoId")
             .header("User-Agent", Net.USER_AGENT)
             .build()
         Net.client.newCall(req).execute().use { r ->
-            if (!r.isSuccessful) return@runCatching -1L
-            org.json.JSONObject(r.body?.string().orEmpty()).optLong("dislikes", -1L)
+            if (!r.isSuccessful) return@runCatching 0L
+            val json = org.json.JSONObject(r.body?.string().orEmpty())
+            json.optLong("dislikes", 0L)
         }
-    }.getOrElse { -1L }
+    }.getOrElse { 0L }
 }

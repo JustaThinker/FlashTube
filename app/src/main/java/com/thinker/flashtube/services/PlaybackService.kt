@@ -35,6 +35,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
@@ -468,7 +469,23 @@ private class YouTubeMediaSourceFactory(context: Context) : MediaSource.Factory 
     override fun getSupportedTypes(): IntArray = fallback.supportedTypes
 
     override fun createMediaSource(mediaItem: MediaItem): MediaSource {
+        val task = Downloads.tasks.find { it.videoId == mediaItem.mediaId && it.status == DownloadStatus.Complete }
+        if (task != null && task.file.exists()) {
+            val localUri = android.net.Uri.fromFile(task.file)
+            val localMediaItem = mediaItem.buildUpon().setUri(localUri).build()
+            Log.i("FlashTube", "media source ${mediaItem.mediaId}: playing local downloaded file ${task.file.name}")
+            return ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(localMediaItem)
+        }
+
         val info = StreamCache.get(mediaItem.mediaId) ?: return fallback.createMediaSource(mediaItem)
+
+        // Live Stream HLS (.m3u8) Playback
+        if (!info.hlsUrl.isNullOrBlank()) {
+            val liveItem = mediaItem.buildUpon().setUri(Uri.parse(info.hlsUrl)).build()
+            Log.i("FlashTube", "media source ${mediaItem.mediaId}: playing live stream HLS URL ${info.hlsUrl}")
+            return HlsMediaSource.Factory(dataSourceFactory).createMediaSource(liveItem)
+        }
+
         val picked = StreamSelection.pick(info)
         // Auto: every quality as one adaptive set. A chosen quality stays pinned below.
         if (QualityPreference.height == null && picked.audio != null) {
