@@ -12,8 +12,8 @@ android {
         applicationId = "com.thinker.flashtube"
         minSdk = 26
         targetSdk = 36
-        versionCode = 100
-        versionName = "1.0.0"
+        versionCode = 120
+        versionName = "1.2.0"
     }
 
     buildTypes {
