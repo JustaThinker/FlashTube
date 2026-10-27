@@ -8,7 +8,7 @@ Sponsor segments are automatically skipped with [SponsorBlock](https://sponsor.a
 
 ---
 
-## 🌟 Key Features
+## Key Features
 
 - **Ad-Free Playback:** Stream YouTube videos with zero ads or interruptions.
 - **High-Quality Streaming & 4K Downloads:** Up to 4K (2160p) / 1440p / 1080p streaming and fast parallel chunk downloading with on-device hardware MediaMuxer.
@@ -23,7 +23,7 @@ Sponsor segments are automatically skipped with [SponsorBlock](https://sponsor.a
 
 ---
 
-## 🛠️ Building
+## Building
 
 ### Requirements
 - Android SDK (`compileSdk 36`, `minSdk 26`)
@@ -41,7 +41,7 @@ Sponsor segments are automatically skipped with [SponsorBlock](https://sponsor.a
 
 ---
 
-## 📚 Credits & Dependencies
+## Credits & Dependencies
 
 - [NewPipeExtractor](https://github.com/TeamNewPipe/NewPipeExtractor): YouTube extraction engine (GPL-3.0)
 - [AndroidX Media3](https://github.com/androidx/media): Audio & video player framework (ExoPlayer)
@@ -50,6 +50,6 @@ Sponsor segments are automatically skipped with [SponsorBlock](https://sponsor.a
 
 ---
 
-## 📄 License
+## License
 
 FlashTube is licensed under [GPL-3.0](LICENSE).
