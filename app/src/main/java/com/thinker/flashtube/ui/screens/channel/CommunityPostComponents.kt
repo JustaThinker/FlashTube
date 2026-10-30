@@ -290,18 +290,21 @@ fun CommunityPostCard(
         // ── Post Images / Media Content (Proportional Natural Scale without Crop or Fixed Height) ──
         if (post.images.isNotEmpty()) {
             Spacer(Modifier.height(8.dp))
+            val mediaAspectRatio = post.imageAspectRatio ?: (16f / 9f)
+            val mediaShape = RoundedCornerShape(10.dp)
             if (post.images.size == 1) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 12.dp)
-                        .clip(RoundedCornerShape(10.dp)),
+                        .aspectRatio(mediaAspectRatio)
+                        .shimmer(shape = mediaShape),
                 ) {
                     AsyncImage(
                         model = post.images[0],
                         contentDescription = null,
-                        contentScale = ContentScale.FillWidth,
-                        modifier = Modifier.fillMaxWidth(),
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize(),
                     )
                 }
             } else {
@@ -310,18 +313,19 @@ fun CommunityPostCard(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 12.dp)
-                        .clip(RoundedCornerShape(10.dp)),
+                        .aspectRatio(mediaAspectRatio)
+                        .shimmer(shape = mediaShape),
                 ) {
                     HorizontalPager(
                         state = pagerState,
                         pageSpacing = 6.dp,
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxSize(),
                     ) { page ->
                         AsyncImage(
                             model = post.images[page],
                             contentDescription = null,
-                            contentScale = ContentScale.FillWidth,
-                            modifier = Modifier.fillMaxWidth(),
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.fillMaxSize(),
                         )
                     }
                     Box(

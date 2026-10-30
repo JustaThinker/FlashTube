@@ -241,6 +241,8 @@ class FeedState(
     private var next: String? = null
     private var loaded = false
     private var lastLoadIdentity: Any? = null
+    /** Startup cache is held back under skeletons and used only if the server request fails. */
+    private var cachedFallback: List<VideoItem>? = null
     private var job: Job? = null
     private var chipJob: Job? = null
     private var chipRequestAttempted = false
@@ -281,14 +283,7 @@ class FeedState(
             }
             if (freshOnRefresh) {
                 val cached = HomeFeedCache.load()
-                if (cached.isNotEmpty()) {
-                    videos = cached
-                    loaded = true
-                    // Render the saved feed immediately, then sync it with YouTube like the
-                    // official app does when it opens with cached content.
-                    refresh()
-                    return
-                }
+                cachedFallback = cached.takeIf { it.isNotEmpty() }
             }
             refresh()
         }
@@ -298,7 +293,8 @@ class FeedState(
     fun ensureChipsLoaded(cacheIdentity: String) {
         if (chipCacheIdentity != cacheIdentity) {
             chipCacheIdentity = cacheIdentity
-            chips = HomeChipCache.load(cacheIdentity)
+            // Keep the chip shimmer visible until this launch's server request completes.
+            chips = emptyList()
             chipRequestAttempted = false
         }
         // The first video request can fall back to the public trending feed, which has no
@@ -306,6 +302,7 @@ class FeedState(
         // let the video request's loading state suppress the only request that can supply chips.
         if (!freshOnRefresh || chipsLoading || chipRequestAttempted) return
         chipsLoading = true
+        val cachedFallback = HomeChipCache.load(cacheIdentity)
         chipJob = scope.launch {
             runCatching { loader(null) }
                 .onSuccess { page ->
@@ -313,7 +310,12 @@ class FeedState(
                         chips = page.chips
                         HomeChipCache.save(cacheIdentity, page.chips)
                         chipRequestAttempted = true
+                    } else if (chips.isEmpty()) {
+                        chips = cachedFallback
                     }
+                }
+                .onFailure {
+                    if (chips.isEmpty()) chips = cachedFallback
                 }
             chipsLoading = false
         }
@@ -331,6 +333,7 @@ class FeedState(
         job = scope.launch {
             runCatching { loader(null) }
                 .onSuccess {
+                    cachedFallback = null
                     videos = it.videos; next = it.next; generation++
                     if (it.chips.isNotEmpty()) {
                         chips = it.chips
@@ -351,6 +354,13 @@ class FeedState(
                 }
                 .onFailure {
                     error = friendly(it)
+                    if (videos.isEmpty()) {
+                        cachedFallback?.let { cached ->
+                            videos = cached
+                            generation++
+                        }
+                    }
+                    cachedFallback = null
                 }
             loading = false
             refreshing = false
@@ -394,6 +404,7 @@ class FeedState(
     fun reset() {
         job?.cancel()
         videos = emptyList(); next = null; loaded = false; loading = false; error = null
+        cachedFallback = null
         chips = emptyList(); chipsLoading = false; chipRequestAttempted = false; chipCacheIdentity = null; selectedChip = null
         chipJob?.cancel(); chipJob = null
         lastLoadIdentity = null
@@ -452,16 +463,30 @@ class LibraryData(scope: CoroutineScope) {
         val rows = ArrayList<VideoItem>(base.size + supplementalPosts.size)
         var postIndex = 0
         var videosSincePost = 0
+        // Pick a varied interval once per feed generation. Seeding keeps positions stable
+        // across Compose recompositions, while a refreshed feed gets a new distribution.
+        val spacing = kotlin.random.Random(home.generation)
+        var videosUntilPost = spacing.nextInt(from = 8, until = 16)
+        var lastWasPost = false
         for (item in base) {
+            if (item.feedPost != null && lastWasPost) continue
             rows += item
-            // Keep posts independent from mix placement: count ordinary videos only.
-            if (item.feedPost == null && item.mixPlaylistId == null) videosSincePost++
-            if (videosSincePost >= 5 && postIndex < supplementalPosts.size) {
-                rows += supplementalPosts[postIndex++].asHomePostRow()
+            if (item.feedPost != null) {
+                lastWasPost = true
                 videosSincePost = 0
+                videosUntilPost = spacing.nextInt(from = 8, until = 16)
+                continue
+            }
+            lastWasPost = false
+            // Keep posts independent from mix placement: count ordinary videos only.
+            if (item.mixPlaylistId == null) videosSincePost++
+            if (videosSincePost >= videosUntilPost && postIndex < supplementalPosts.size) {
+                rows += supplementalPosts[postIndex++].asHomePostRow()
+                lastWasPost = true
+                videosSincePost = 0
+                videosUntilPost = spacing.nextInt(from = 8, until = 16)
             }
         }
-        while (postIndex < supplementalPosts.size) rows += supplementalPosts[postIndex++].asHomePostRow()
         return rows
     }
 

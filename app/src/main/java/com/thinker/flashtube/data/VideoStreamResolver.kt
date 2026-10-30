@@ -14,6 +14,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.stream.StreamInfo
+import org.schabi.newpipe.extractor.stream.StreamType
 import java.net.URLDecoder
 import java.util.concurrent.ConcurrentHashMap
 
@@ -51,6 +52,14 @@ object VideoStreamResolutionCache {
     private const val TAG = "VideoStreamResCache"
     private val cache = ConcurrentHashMap<String, ResolvedStreamLadder>()
     private val inFlight = ConcurrentHashMap<String, CompletableDeferred<ResolvedStreamLadder>>()
+
+    /** Return only a still-valid ladder; media-source construction must never fetch it. */
+    fun getIfFresh(videoId: String): ResolvedStreamLadder? {
+        val cached = cache[videoId] ?: return null
+        if (cached.expiresAtMs > System.currentTimeMillis()) return cached
+        cache.remove(videoId, cached)
+        return null
+    }
 
     fun getOrLoad(videoId: String, loader: suspend (String) -> ResolvedStreamLadder): suspend () -> ResolvedStreamLadder = {
         val now = System.currentTimeMillis()
@@ -114,7 +123,13 @@ object VideoStreamResolver {
 
     suspend fun resolve(videoId: String): ResolvedStreamLadder = withContext(Dispatchers.IO) {
         VideoStreamResolutionCache.getOrLoad(videoId) { id ->
-            resolveVisionOS(id) ?: resolveFallback(id)
+            val visionOs = resolveVisionOS(id)
+            val fallback = visionOs ?: resolveFallback(id)
+            if (fallback.isLive && fallback.videoStreams.none { it.isHls }) {
+                resolveLiveHls(id) ?: fallback
+            } else {
+                fallback
+            }
         }()
     }
 
@@ -205,7 +220,8 @@ object VideoStreamResolver {
         val videoDetails = root.optJSONObject("videoDetails") ?: return null
         val title = videoDetails.optString("title", "")
         val durationSec = videoDetails.optString("lengthSeconds", "0").toLongOrNull() ?: 0L
-        val isLive = videoDetails.optBoolean("isLive", false)
+        val isLive = videoDetails.optBoolean("isLive", false) ||
+            videoDetails.optBoolean("isLiveContent", false)
 
         val streamingData = root.optJSONObject("streamingData") ?: return null
         val hlsManifestUrl = streamingData.optString("hlsManifestUrl").takeIf { it.isNotBlank() }
@@ -366,16 +382,71 @@ object VideoStreamResolver {
             )
         }
 
+        val hlsUrl = info.hlsUrl?.takeIf { it.isNotBlank() }
+        val streamsWithHls = if (hlsUrl != null) {
+            videoStreams + ResolvedStreamVariant(
+                url = hlsUrl,
+                mimeType = "application/x-mpegURL",
+                qualityLabel = "Live HLS",
+                height = 1080,
+                width = 1920,
+                fps = 30,
+                bitrate = 0L,
+                isHls = true,
+            )
+        } else videoStreams
+
+        val isLive = info.streamType == StreamType.LIVE_STREAM
         val expiresAtMs = System.currentTimeMillis() + 2 * 3600 * 1000L
 
         return ResolvedStreamLadder(
             videoId = videoId,
             title = info.name.orEmpty(),
             durationSec = info.duration,
-            videoStreams = videoStreams.sortedByDescending { it.height },
+            videoStreams = streamsWithHls.sortedByDescending { it.height },
             audioStreams = audioStreams.sortedByDescending { it.bitrate },
             expiresAtMs = expiresAtMs,
-            isLive = false
+            isLive = isLive || hlsUrl != null
         )
+    }
+
+    /** The iOS player client exposes HLS for active live streams; request it only when needed. */
+    private fun resolveLiveHls(videoId: String): ResolvedStreamLadder? {
+        return try {
+            val clientContext = JSONObject().apply {
+                put("client", JSONObject().apply {
+                    put("clientName", "IOS")
+                    put("clientVersion", "19.09.3")
+                    put("deviceModel", "iPhone16,2")
+                    put("platform", "MOBILE")
+                    put("osName", "iPhone")
+                    put("osVersion", "17.3.1")
+                })
+            }
+            val payload = JSONObject().apply {
+                put("context", clientContext)
+                put("videoId", videoId)
+            }
+            VisitorIdentity.cachedOrNull()?.let { visitor ->
+                clientContext.getJSONObject("client").put("visitorData", visitor)
+            }
+            val requestBuilder = Request.Builder()
+                .url("https://www.youtube.com/youtubei/v1/player")
+                .post(payload.toString().toRequestBody("application/json".toMediaType()))
+                .addHeader("User-Agent", "com.google.ios.youtube/19.09.3 (iPhone; CPU iPhone OS 17_3_1 like Mac OS X)")
+            VisitorIdentity.cachedOrNull()?.let { visitor ->
+                requestBuilder.addHeader("X-Goog-Visitor-Id", visitor)
+            }
+            Net.client.newCall(requestBuilder.build()).execute().use { response ->
+                if (!response.isSuccessful) return null
+                val body = response.body?.string() ?: return null
+                val ladder = parseVisionOsPayload(videoId, JSONObject(body)) ?: return null
+                if (ladder.videoStreams.none { it.isHls }) return null
+                ladder.copy(isLive = true)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "iOS HLS resolution failed for live video $videoId", e)
+            null
+        }
     }
 }

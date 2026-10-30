@@ -149,8 +149,8 @@ class PlaybackService : MediaSessionService() {
 
     /**
      * Controllers send items carrying only a video ID (Media3 strips URIs crossing the
-     * controller boundary). Each one is resolved here into a playable item; the actual
-     * streams come from [StreamCache] in [YouTubeMediaSourceFactory].
+     * controller boundary). Resolve stream metadata on this worker before Media3 asks the
+     * source factory to build a source; source construction itself must remain cache-only.
      */
     private inner class SessionCallback : MediaSession.Callback {
         override fun onAddMediaItems(
@@ -476,12 +476,10 @@ private class YouTubeMediaSourceFactory(private val context: Context) : MediaSou
             return ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(localMediaItem)
         }
 
-        // Fast VISIONOS stream ladder resolution (~150ms)
-        val ladder = runCatching {
-            kotlinx.coroutines.runBlocking {
-                com.thinker.flashtube.data.VideoStreamResolver.resolve(mediaItem.mediaId)
-            }
-        }.getOrNull()
+        // SessionCallback resolves the ladder on a worker before this factory runs. Never
+        // perform network extraction here: Media3 may request a source on its app thread.
+        val ladder = com.thinker.flashtube.data.VideoStreamResolutionCache
+            .getIfFresh(mediaItem.mediaId)
 
         if (ladder != null) {
             val targetHeight = QualityPreference.getEffectiveTargetHeight(context)
