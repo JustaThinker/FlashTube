@@ -23,6 +23,87 @@ import java.util.concurrent.ConcurrentHashMap
  * heart state by `toolbarStateKey`. Both live in `frameworkUpdates` entity mutations.
  */
 object CommentFeed {
+    /** Locate and load a live chat using the continuation in the watch-next response. */
+    suspend fun firstLive(videoId: String): CommentsPage = withContext(Dispatchers.IO) {
+        val root = InnerTube.postAny("next", JSONObject().put("videoId", videoId))
+        var continuation: String? = null
+        root.walk { key, obj ->
+            if (key == "liveChatRenderer" && continuation == null) {
+                continuation = obj.optJSONArray("continuations")?.optJSONObject(0)
+                    ?.let { it.optJSONObject("reloadContinuationData") ?: it.optJSONObject("timedContinuationData") }
+                    ?.optString("continuation")?.takeIf { it.isNotBlank() }
+            }
+        }
+        val token = continuation ?: return@withContext CommentsPage(emptyList(), -1, true, null)
+        livePage(InnerTube.postAny("live_chat/get_live_chat", JSONObject().put("continuation", token)))
+    }
+
+    suspend fun moreLive(token: String): CommentsPage = withContext(Dispatchers.IO) {
+        livePage(InnerTube.postAny("live_chat/get_live_chat", JSONObject().put("continuation", token)))
+    }
+
+    suspend fun liveViewerCount(videoId: String): String? = withContext(Dispatchers.IO) {
+        val root = InnerTube.postAny("updated_metadata", JSONObject().put("videoId", videoId))
+        var count: String? = null
+        root.walk { key, obj ->
+            if (key == "videoViewCountRenderer" && obj.optBoolean("isLive")) {
+                count = obj.optJSONObject("viewCount")?.text("simpleText")
+                    ?: obj.optJSONObject("extraShortViewCount")?.text("simpleText")
+            }
+        }
+        count
+    }
+
+    internal fun livePage(root: JSONObject): CommentsPage {
+        val chat = root.optJSONObject("continuationContents")?.optJSONObject("liveChatContinuation")
+            ?: return CommentsPage(emptyList(), -1, true, null)
+        val messages = ArrayList<Comment>()
+        val actions = chat.optJSONArray("actions")
+        val removed = linkedSetOf<String>()
+        for (i in 0 until (actions?.length() ?: 0)) {
+            val action = actions?.optJSONObject(i) ?: continue
+            action.optJSONObject("removeChatItemAction")?.optString("targetItemId")
+                ?.takeIf { it.isNotBlank() }?.let(removed::add)
+            action.optJSONObject("markChatItemAsDeletedAction")?.optString("targetItemId")
+                ?.takeIf { it.isNotBlank() }?.let(removed::add)
+            val item = action.optJSONObject("addChatItemAction")?.optJSONObject("item") ?: continue
+            val rendererKey = listOf("liveChatTextMessageRenderer", "liveChatPaidMessageRenderer", "liveChatMembershipItemRenderer")
+                .firstOrNull { item.has(it) } ?: continue
+            val renderer = item.optJSONObject(rendererKey) ?: continue
+            val authorName = renderer.optJSONObject("authorName")?.let { it.text("simpleText") ?: it.text("runs") }.orEmpty()
+            val channel = renderer.optString("authorExternalChannelId").takeIf { it.startsWith("UC") }
+            val avatar = renderer.optJSONObject("authorPhoto")?.optJSONArray("thumbnails")?.optJSONObject(0)
+                ?.optString("url")?.takeIf { it.isNotBlank() }?.let { if (it.startsWith("//")) "https:$it" else it }
+            val text = renderer.optJSONObject("message")?.let { message ->
+                message.optString("simpleText").takeIf { it.isNotBlank() }
+                    ?: message.optJSONArray("runs")?.let { runs -> (0 until runs.length()).mapNotNull { runs.optJSONObject(it)?.optString("text")?.takeIf(String::isNotBlank) }.joinToString("") }
+            }.orEmpty().ifBlank {
+                renderer.optJSONObject("headerSubtext")?.text("simpleText").orEmpty()
+            }
+            if (text.isBlank() || authorName.isBlank()) continue
+            val id = renderer.optString("id").ifBlank { "live-${channel.orEmpty()}-$i-${text.hashCode()}" }
+            messages += Comment(id, authorName, channel, avatar = avatar, text = text, likes = 0,
+                ago = "live", pinned = false, hearted = false, replyCount = 0, repliesToken = null)
+        }
+        val next = chat.optJSONArray("continuations")?.optJSONObject(0)?.let { c ->
+            c.optJSONObject("invalidationContinuationData") ?: c.optJSONObject("timedContinuationData") ?: c.optJSONObject("reloadContinuationData")
+        }
+        val input = chat.optJSONObject("actionPanel")?.optJSONObject("liveChatMessageInputRenderer")
+        val restriction = chat.optJSONObject("actionPanel")?.optJSONObject("liveChatRestrictedParticipationRenderer")
+            ?.optJSONObject("message")?.text("simpleText")
+        return CommentsPage(
+            comments = messages.distinctBy { it.id }, total = -1, disabled = false,
+            next = next?.optString("continuation")?.takeIf { it.isNotBlank() },
+            liveSendParams = input?.optJSONObject("sendButton")?.optJSONObject("buttonRenderer")
+                ?.optJSONObject("serviceEndpoint")?.optJSONObject("sendLiveChatMessageEndpoint")?.optString("params")?.takeIf { it.isNotBlank() },
+            liveTimeoutMs = next?.optLong("timeoutMs")?.takeIf { it > 0 } ?: 10_000L,
+            liveMaxMessageLength = input?.optJSONObject("inputField")?.optJSONObject("liveChatTextInputFieldRenderer")
+                ?.optInt("maxCharacterLimit")?.takeIf { it > 0 } ?: 200,
+            liveRestriction = restriction?.takeIf { it.isNotBlank() },
+            removedIds = removed,
+        )
+    }
+
     suspend fun first(videoId: String): CommentsPage = withContext(Dispatchers.IO) {
         var token: String? = null
         InnerTube.postAny("next", JSONObject().put("videoId", videoId)).forEachObject { obj ->
@@ -38,6 +119,14 @@ object CommentFeed {
     /** The next page of comments, or one thread's replies (same call, different token). */
     suspend fun more(token: String): CommentsPage = withContext(Dispatchers.IO) {
         parsePage(InnerTube.postAny("next", JSONObject().put("continuation", token)))
+    }
+
+    suspend fun firstPost(params: String): CommentsPage = withContext(Dispatchers.IO) {
+        parsePage(InnerTube.postAny("browse", JSONObject().put("params", params)))
+    }
+
+    suspend fun morePost(token: String): CommentsPage = withContext(Dispatchers.IO) {
+        parsePage(InnerTube.postAny("browse", JSONObject().put("continuation", token)))
     }
 
     internal fun parsePage(page: JSONObject): CommentsPage {
@@ -170,7 +259,17 @@ object ChannelAvatars {
 
     fun resolve(scope: CoroutineScope, videos: List<VideoItem>, seed: Map<String, String?> = emptyMap()) {
         seed.forEach { (id, url) -> url?.let { known[id] = normalizeChannelAvatarUrl(it) } }
-        val need = videos.filter { it.avatar == null }.mapNotNull { it.channelId() }.toSet()
+        val need = mutableSetOf<String>()
+        for (v in videos) {
+            if (v.avatar == null) {
+                v.channelId()?.let { need.add(it) }
+            }
+            for (collab in v.collabChannels) {
+                if (collab.avatar == null && collab.id.startsWith("UC")) {
+                    need.add(collab.id)
+                }
+            }
+        }
         need.filter { it !in known && asked.add(it) }.forEach { id ->
             scope.launch {
                 gate.withPermit {

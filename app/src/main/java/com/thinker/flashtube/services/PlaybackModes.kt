@@ -18,7 +18,7 @@ import kotlin.math.roundToInt
  * the background follows it too. Pitch is never changed.
  */
 object PlaybackSpeed {
-    const val MIN = 0.5f
+    const val MIN = 0.25f
     const val MAX = 3f
     const val STEP = 0.05f
     /** Steps from [MIN] to [MAX]. */
@@ -70,31 +70,6 @@ object PlaybackSpeed {
 }
 
 /**
- * Audio only (Derek, 2026-10-13): one switch for the whole app, kept until turned off. The
- * player's video track is disabled (as in the background), so no video is fetched or
- * decoded; the open player shows only its playback controls and can't go fullscreen.
- */
-object AudioOnly {
-    private const val KEY = "audio_only"
-    private var prefs: SharedPreferences? = null
-
-    var enabled by mutableStateOf(false)
-        private set
-
-    fun init(context: Context) {
-        prefs = context.getSharedPreferences("playback", Context.MODE_PRIVATE)
-        enabled = prefs?.getBoolean(KEY, false) == true
-    }
-
-    fun set(on: Boolean) {
-        enabled = on
-        prefs?.edit()?.putBoolean(KEY, on)?.apply()
-    }
-
-    fun toggle() = set(!enabled)
-}
-
-/**
  * Ambient mode: dynamic lighting around the player matching the live video content.
  */
 object AmbientMode {
@@ -115,4 +90,59 @@ object AmbientMode {
     }
 
     fun toggle() = set(!enabled)
+}
+
+/**
+ * Double-tap seek step configuration (5s, 10s, 15s, 20s, 30s, 60s).
+ */
+object SeekConfig {
+    private const val KEY = "double_tap_seek_step"
+    private var prefs: SharedPreferences? = null
+
+    val options = listOf(5, 10, 15, 20, 30, 60)
+
+    var stepSeconds by mutableStateOf(10)
+        private set
+
+    val stepMs: Long get() = stepSeconds * 1000L
+
+    fun init(context: Context) {
+        prefs = context.getSharedPreferences("playback", Context.MODE_PRIVATE)
+        stepSeconds = prefs?.getInt(KEY, 10) ?: 10
+    }
+
+    fun setStep(seconds: Int) {
+        if (seconds in options) {
+            stepSeconds = seconds
+            prefs?.edit()?.putInt(KEY, seconds)?.apply()
+        }
+    }
+}
+
+/** Keeps audio playback alive when the app is backgrounded or swiped from Recents. */
+object BackgroundPlayback {
+    private const val KEY_ENABLED = "background_playback_enabled"
+    private const val KEY_KEEP_ON_TASK_REMOVED = "background_keep_on_task_removed"
+    private var prefs: SharedPreferences? = null
+
+    var enabled by mutableStateOf(true)
+        private set
+    var keepOnTaskRemoved by mutableStateOf(true)
+        private set
+
+    fun init(context: Context) {
+        prefs = context.getSharedPreferences("playback", Context.MODE_PRIVATE)
+        enabled = prefs?.getBoolean(KEY_ENABLED, true) ?: true
+        keepOnTaskRemoved = prefs?.getBoolean(KEY_KEEP_ON_TASK_REMOVED, true) ?: true
+    }
+
+    fun updateEnabled(on: Boolean) {
+        enabled = on
+        prefs?.edit()?.putBoolean(KEY_ENABLED, on)?.apply()
+    }
+
+    fun updateKeepOnTaskRemoved(on: Boolean) {
+        keepOnTaskRemoved = on
+        prefs?.edit()?.putBoolean(KEY_KEEP_ON_TASK_REMOVED, on)?.apply()
+    }
 }

@@ -71,14 +71,23 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.Comment
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.outlined.ThumbDown
 import androidx.compose.material.icons.outlined.ThumbUp
+import androidx.compose.material.icons.rounded.AccountCircle
+import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PushPin
+import androidx.compose.material.icons.rounded.ThumbDown
 import androidx.compose.material.icons.rounded.ThumbUp
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -106,7 +115,9 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.io.IOException
 
 /** Comments for the open video: first page, paging, per-comment replies, likes and posting. */
 @Stable
@@ -120,6 +131,15 @@ class CommentsState(private val scope: CoroutineScope) {
         private set
     var loading by mutableStateOf(false)
         private set
+    var isLive by mutableStateOf(false)
+        private set
+    var liveViewerCount by mutableStateOf<String?>(null)
+        private set
+    var liveMaxMessageLength by mutableStateOf(200)
+        private set
+    var liveRestriction by mutableStateOf<String?>(null)
+        private set
+    private var liveSendParams: String? = null
     var error by mutableStateOf<String?>(null)
         private set
     private var next: String? = null
@@ -143,18 +163,23 @@ class CommentsState(private val scope: CoroutineScope) {
     val repliesLoading = mutableStateMapOf<String, Boolean>()
 
     private var job: Job? = null
+    private var liveJob: Job? = null
 
     /** A new video opened: drop the old comments now; [load] follows once its data is in. */
     fun clearFor(id: String) {
         job?.cancel()
+        liveJob?.cancel()
         videoId = id
+        isLive = false; liveViewerCount = null; liveSendParams = null; liveRestriction = null
         comments = emptyList(); total = -1; disabled = false; error = null; next = null
         replies.clear(); repliesLoading.clear(); replyingTo = null; draft = ""; postError = null
         loading = true
     }
 
-    fun load(id: String) {
+    fun load(id: String, live: Boolean = false) {
         videoId = id
+        isLive = live
+        liveViewerCount = null; liveSendParams = null; liveRestriction = null
         replyingTo = null
         draft = ""
         postError = null
@@ -168,22 +193,62 @@ class CommentsState(private val scope: CoroutineScope) {
         liked.clear()
         loading = true
         job?.cancel()
+        liveJob?.cancel()
         job = scope.launch {
-            runCatching { CommentFeed.first(id) }
+            runCatching { if (live) CommentFeed.firstLive(id) else CommentFeed.first(id) }
                 .onSuccess { page ->
                     if (videoId != id) return@onSuccess
                     comments = page.comments
                     total = page.total
                     disabled = page.disabled
                     next = page.next
+                    liveSendParams = page.liveSendParams
+                    liveMaxMessageLength = page.liveMaxMessageLength
+                    liveRestriction = page.liveRestriction
                     arrived(page.comments)
+                    if (live) startLivePolling(id, page.next, page.liveTimeoutMs)
                 }
                 .onFailure { if (videoId == id) error = YouTube.friendlyError(it) }
             loading = false
         }
     }
 
+    private fun startLivePolling(id: String, initialToken: String?, initialDelay: Long) {
+        liveJob?.cancel()
+        liveJob = scope.launch {
+            runCatching { CommentFeed.liveViewerCount(id) }
+                .onSuccess { if (videoId == id) liveViewerCount = it }
+            var token = initialToken
+            var waitMs = initialDelay.coerceIn(1_000L, 30_000L)
+            var polls = 0
+            while (videoId == id && isLive && token != null) {
+                delay(waitMs)
+                if (videoId != id || !isLive) break
+                val result = runCatching { CommentFeed.moreLive(token!!) }
+                result.onSuccess { page ->
+                    if (videoId != id) return@onSuccess
+                    val removed = page.removedIds
+                    val seen = comments.mapTo(HashSet()) { it.id }
+                    comments = comments.filterNot { it.id in removed } + page.comments.filter { seen.add(it.id) }
+                    liveSendParams = page.liveSendParams ?: liveSendParams
+                    liveRestriction = page.liveRestriction
+                    liveMaxMessageLength = page.liveMaxMessageLength
+                    token = page.next
+                    waitMs = page.liveTimeoutMs.coerceIn(1_000L, 30_000L)
+                    arrived(page.comments)
+                    if (page.viewerCount != null) liveViewerCount = page.viewerCount
+                    polls++
+                    if (polls % 3 == 0) runCatching { CommentFeed.liveViewerCount(id) }
+                        .onSuccess { count -> if (videoId == id) liveViewerCount = count }
+                }.onFailure {
+                    waitMs = (waitMs * 2).coerceAtMost(30_000L)
+                }
+            }
+        }
+    }
+
     fun loadMore() {
+        if (isLive) return
         val id = videoId ?: return
         val page = next ?: return
         if (loading) return
@@ -249,19 +314,27 @@ class CommentsState(private val scope: CoroutineScope) {
         postError = null
         scope.launch {
             runCatching {
-                if (threadId == null) CommentPosting.comment(id, text) else CommentPosting.reply(id, threadId, text)
-            }.onSuccess {
+                if (isLive) CommentPosting.liveMessage(liveSendParams ?: throw IOException("Live chat is not ready yet."), text)
+                else {
+                    if (threadId == null) CommentPosting.comment(id, text) else CommentPosting.reply(id, threadId, text)
+                    null
+                }
+            }.onSuccess { echoed ->
                 val profile = Account.profile
                 val mine = Comment(
-                    id = "local-${System.nanoTime()}",
+                    id = echoed?.id ?: "local-${System.nanoTime()}",
                     author = profile?.handle ?: profile?.name ?: "You",
                     channelId = null,
                     name = profile?.name,
                     avatar = profile?.avatar,
-                    text = text, likes = 0, ago = "just now",
+                    text = echoed?.text ?: text, likes = 0, ago = if (isLive) "live" else "just now",
                     pinned = false, hearted = false, replyCount = 0, repliesToken = null,
                 )
-                if (threadId == null) {
+                if (isLive) {
+                    val seen = comments.any { it.id == mine.id }
+                    if (!seen) comments = (comments + mine).takeLast(250)
+                    draft = ""
+                } else if (threadId == null) {
                     comments = listOf(mine) + comments
                     if (total >= 0) total += 1
                 } else {
@@ -298,20 +371,30 @@ fun CommentsCard(state: CommentsState, onOpen: () -> Unit) {
                 ambientColor = shadowColor.copy(alpha = 0.45f),
                 spotColor = shadowColor.copy(alpha = 0.30f),
             )
-            .pressable(enabled = state.comments.isNotEmpty() || (Account.signedIn && !state.disabled && !state.loading), pressedScale = 0.98f, onClick = onOpen)
+            .pressable(enabled = state.isLive || state.comments.isNotEmpty() || (Account.signedIn && !state.disabled && !state.loading), pressedScale = 0.98f, onClick = onOpen)
             .clip(shape)
             .background(cardBg)
             .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Comments", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-            if (state.total > 0) {
+            Text(if (state.isLive) "Live chat" else "Comments", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            if (state.isLive && state.liveViewerCount != null) {
+                Spacer(Modifier.width(6.dp))
+                Text("${state.liveViewerCount} watching", color = c.onSurfaceVariant, fontWeight = FontWeight.Medium, fontSize = 12.sp)
+            } else if (state.total > 0) {
                 Spacer(Modifier.width(6.dp))
                 Text(formatCount(state.total.toLong()), color = c.onSurfaceVariant, fontWeight = FontWeight.Medium, fontSize = 12.sp)
             }
         }
         Spacer(Modifier.height(4.dp))
-        when {
+        if (state.isLive) {
+            Box(
+                Modifier
+                    .clip(CircleShape)
+                    .background(if (hasAmbient) ambient.copy(alpha = 0.16f) else c.surfaceContainerHigh)
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+            ) { Text("Leave a comment", color = c.onSurface, fontSize = 12.sp, fontWeight = FontWeight.Medium) }
+        } else when {
             state.disabled -> Text("Comments are turned off for this video.", color = c.onSurfaceVariant, fontSize = 12.sp)
             first != null -> Row(verticalAlignment = Alignment.CenterVertically) {
                 ChannelAvatar(first.avatar, first.author, size = 22)
@@ -331,6 +414,12 @@ fun CommentsCard(state: CommentsState, onOpen: () -> Unit) {
             else -> Text(if (Account.signedIn) "No comments yet. Add the first one." else "No comments yet.", color = c.onSurfaceVariant, fontSize = 12.sp)
         }
     }
+}
+
+fun formatHandle(name: String): String {
+    val trimmed = name.trim()
+    if (trimmed.startsWith("@")) return trimmed
+    return "@$trimmed"
 }
 
 /**
@@ -421,6 +510,7 @@ fun CommentsPanel(
             }
         }
         val shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+        var selectedSort by remember { mutableStateOf("Top") }
         Column(
             Modifier
                 .align(Alignment.BottomCenter)
@@ -444,18 +534,69 @@ fun CommentsPanel(
                         onDragStopped = { v -> settle(v) },
                     ),
             ) {
-                Box(Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 6.dp), Alignment.Center) {
-                    Box(Modifier.size(width = 36.dp, height = 4.dp).clip(CircleShape).background(c.onSurfaceVariant.copy(alpha = 0.45f)))
+                Box(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 6.dp), Alignment.Center) {
+                    Box(Modifier.size(width = 38.dp, height = 4.dp).clip(CircleShape).background(c.onSurfaceVariant.copy(alpha = 0.4f)))
                 }
-                Row(Modifier.padding(start = 16.dp, end = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Comments", fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                    if (state.total > 0) {
+                Row(
+                    Modifier.padding(start = 16.dp, end = 12.dp, bottom = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(if (state.isLive) "Live chat" else "Comments", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    if (state.isLive && state.liveViewerCount != null) {
                         Spacer(Modifier.width(8.dp))
-                        Text(formatCount(state.total.toLong()), color = c.onSurfaceVariant, fontWeight = FontWeight.Medium, fontSize = 14.sp)
+                        Text("${state.liveViewerCount} watching", color = c.onSurfaceVariant, fontWeight = FontWeight.Normal, fontSize = 14.sp)
+                    } else if (state.total > 0) {
+                        Spacer(Modifier.width(8.dp))
+                        Text(formatCount(state.total.toLong()), color = c.onSurfaceVariant, fontWeight = FontWeight.Normal, fontSize = 14.sp)
                     }
                     Spacer(Modifier.weight(1f))
-                    Box(Modifier.size(40.dp).pressable { close() }, contentAlignment = Alignment.Center) {
-                        Icon(Icons.Rounded.Close, "Close comments", tint = c.onSurfaceVariant)
+                    Box(
+                        Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .pressable { /* Info popup */ },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(Icons.Rounded.Info, "Info", tint = c.onSurface, modifier = Modifier.size(20.dp))
+                    }
+                    Spacer(Modifier.width(4.dp))
+                    Box(
+                        Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .pressable { close() },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(Icons.Rounded.Close, "Close comments", tint = c.onSurface, modifier = Modifier.size(22.dp))
+                    }
+                }
+
+                // Sort Chips Bar (Top | Timed | Newest)
+                if (!state.isLive) Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    val sortOptions = listOf("Top", "Timed", "Newest")
+                    sortOptions.forEach { option ->
+                        val isSelected = selectedSort == option
+                        Box(
+                            modifier = Modifier
+                                .height(32.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isSelected) c.onSurface else c.surfaceContainerHigh)
+                                .pressable { selectedSort = option }
+                                .padding(horizontal = 14.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = option,
+                                color = if (isSelected) c.surface else c.onSurface,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                fontSize = 13.sp,
+                            )
+                        }
                     }
                 }
                 Box(Modifier.fillMaxWidth().height(1.dp).background(c.onSurface.copy(alpha = 0.08f)))
@@ -464,31 +605,44 @@ fun CommentsPanel(
             val nearEnd by remember {
                 derivedStateOf { (list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= list.layoutInfo.totalItemsCount - 4 }
             }
-            LaunchedEffect(nearEnd) { if (nearEnd) state.loadMore() }
+            LaunchedEffect(state.isLive, state.comments.size) {
+                if (state.isLive && state.comments.isNotEmpty()) list.scrollToItem(state.comments.lastIndex)
+            }
+            LaunchedEffect(nearEnd, state.isLive) { if (nearEnd && !state.isLive) state.loadMore() }
+
+            val displayedComments = remember(state.comments, selectedSort) {
+                when {
+                    state.isLive -> state.comments
+                    selectedSort == "Timed" -> state.comments.filter { TIMESTAMP_REGEX.containsMatchIn(it.text) }.ifEmpty { state.comments }
+                    else -> state.comments
+                }
+            }
+
             LazyColumn(state = list, modifier = Modifier.weight(1f).nestedScroll(listPull)) {
-                if (state.comments.isNotEmpty() && onSeekToTimestamp != null) {
+                if (!state.isLive && state.comments.isNotEmpty() && onSeekToTimestamp != null && selectedSort != "Timed") {
                     item(key = "chapters_carousel") {
                         TimelineChaptersCarousel(state.comments, onSeekToTimestamp)
                     }
                 }
-                items(state.comments, key = { it.id }) {
+                items(displayedComments, key = { it.id }) {
                     CommentRow(it, state, creatorAvatar, creatorName, onSeekToTimestamp = onSeekToTimestamp)
                 }
-                if (state.loading || state.hasMore) item {
+                if (state.loading || (!state.isLive && state.hasMore)) item {
                     Box(Modifier.fillMaxWidth().padding(20.dp), Alignment.Center) {
                         CircularProgressIndicator(color = c.primary, strokeWidth = 3.dp, modifier = Modifier.size(26.dp))
                     }
                 }
-                if (!state.loading && state.comments.isEmpty()) item {
+                if (!state.loading && displayedComments.isEmpty()) item {
                     Text(
-                        if (state.disabled) "Comments are turned off for this video." else "No comments yet.",
+                        if (state.isLive && state.disabled) "Live chat is unavailable for this stream."
+                        else if (state.disabled) "Comments are turned off for this video." else if (state.isLive) "Waiting for messages…" else "No comments yet.",
                         color = c.onSurfaceVariant, fontSize = 14.sp, modifier = Modifier.padding(20.dp),
                     )
                 }
                 item { Spacer(Modifier.height(12.dp)) }
             }
-            if (Account.signedIn) Composer(state) else Text(
-                "Sign in to comment.",
+            if (Account.signedIn && (!state.isLive || state.liveRestriction == null)) Composer(state) else Text(
+                state.liveRestriction ?: if (state.isLive) "Sign in to chat." else "Sign in to comment.",
                 color = c.onSurfaceVariant, fontSize = 13.sp,
                 modifier = Modifier.fillMaxWidth().background(c.surfaceContainer).padding(horizontal = 20.dp, vertical = 14.dp),
             )
@@ -514,51 +668,86 @@ private fun Composer(state: CommentsState) {
         }, 120)
         state.post()
     }
-    // Tapping Reply focuses the field.
     LaunchedEffect(state.replyingTo) { if (state.replyingTo != null) runCatching { requester.requestFocus() } }
-    Column(Modifier.fillMaxWidth().background(c.surfaceContainer).padding(horizontal = 12.dp, vertical = 10.dp)) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(c.surface)
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+    ) {
         state.replyingTo?.let { target ->
             Row(Modifier.padding(start = 8.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Replying to ${target.displayName()}", color = c.onSurfaceVariant, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                Text("Replying to ${formatHandle(target.displayName())}", color = c.onSurfaceVariant, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                 Box(Modifier.size(28.dp).pressable { state.replyingTo = null }, contentAlignment = Alignment.Center) {
                     Icon(Icons.Rounded.Close, "Cancel reply", tint = c.onSurfaceVariant, modifier = Modifier.size(16.dp))
                 }
             }
         }
         state.postError?.let { Text(it, color = c.error, fontSize = 12.sp, modifier = Modifier.padding(start = 8.dp, bottom = 6.dp)) }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier.weight(1f).clip(RoundedCornerShape(24.dp)).background(c.surfaceContainerHighest)
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-            ) {
+
+        val canSend = state.draft.isNotBlank() && !state.posting
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(44.dp)
+                .clip(CircleShape)
+                .background(c.surfaceContainerHigh)
+                .padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ChannelAvatar(
+                url = Account.profile?.avatar,
+                name = Account.profile?.name ?: "Me",
+                size = 26,
+            )
+            Spacer(Modifier.width(10.dp))
+            Box(modifier = Modifier.weight(1f)) {
                 if (state.draft.isEmpty()) {
-                    Text(if (state.replyingTo != null) "Add a reply…" else "Add a comment…", color = c.onSurfaceVariant, fontSize = 15.sp)
+                    Text(
+                        text = if (state.replyingTo != null) "Add a reply…" else "Share your thoughts...",
+                        color = c.onSurfaceVariant,
+                        fontSize = 14.sp,
+                    )
                 }
                 BasicTextField(
                     value = state.draft,
-                    onValueChange = { state.draft = it },
-                    textStyle = TextStyle(color = c.onSurface, fontSize = 15.sp),
+                    onValueChange = { state.draft = if (state.isLive) it.take(state.liveMaxMessageLength) else it },
+                    textStyle = TextStyle(color = c.onSurface, fontSize = 14.sp),
                     cursorBrush = SolidColor(c.primary),
-                    maxLines = 5,
+                    maxLines = 4,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send, capitalization = KeyboardCapitalization.Sentences),
                     keyboardActions = KeyboardActions(onSend = { send() }, onDone = { send() }),
-                    modifier = Modifier.fillMaxWidth().focusRequester(requester).onPreviewKeyEvent { e ->
-                        if (e.key == Key.Enter || e.key == Key.NumPadEnter) {
-                            if (e.type == KeyEventType.KeyDown) send()
-                            true
-                        } else false
-                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(requester)
+                        .onPreviewKeyEvent { e ->
+                            if (e.key == Key.Enter || e.key == Key.NumPadEnter) {
+                                if (e.type == KeyEventType.KeyDown) send()
+                                true
+                            } else false
+                        },
                 )
             }
-            Spacer(Modifier.width(8.dp))
-            val canSend = state.draft.isNotBlank() && !state.posting
-            Box(
-                Modifier.size(46.dp).pressable(enabled = canSend) { send() }.clip(CircleShape)
-                    .background(if (canSend) c.primary else c.surfaceContainerHighest),
-                contentAlignment = Alignment.Center,
-            ) {
-                if (state.posting) CircularProgressIndicator(color = c.onPrimary, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
-                else Icon(Icons.AutoMirrored.Rounded.Send, "Post", tint = if (canSend) c.onPrimary else c.onSurfaceVariant, modifier = Modifier.size(20.dp))
+            if (canSend || state.posting) {
+                Spacer(Modifier.width(8.dp))
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .pressable(enabled = canSend) { send() },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (state.posting) {
+                        CircularProgressIndicator(color = c.primary, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+                    } else {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Rounded.Send,
+                            contentDescription = "Post",
+                            tint = c.primary,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                }
             }
         }
     }
@@ -597,7 +786,7 @@ fun parseTimestampToSeconds(text: String): Long? {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun CommentTextWithTimestamps(
+fun CommentTextWithTimestamps(
     text: String,
     onSeekToTimestamp: ((Long) -> Unit)?,
 ) {
@@ -605,7 +794,7 @@ private fun CommentTextWithTimestamps(
     val matches = TIMESTAMP_REGEX.findAll(text).toList()
 
     if (matches.isEmpty() || onSeekToTimestamp == null) {
-        Text(text, fontSize = 14.sp, lineHeight = 19.sp, color = c.onSurface)
+        Text(text, fontSize = 13.5.sp, lineHeight = 18.5.sp, color = c.onSurface)
         return
     }
 
@@ -617,35 +806,37 @@ private fun CommentTextWithTimestamps(
         matches.forEach { match ->
             if (match.range.first > lastIdx) {
                 val segment = text.substring(lastIdx, match.range.first)
-                Text(segment, fontSize = 14.sp, lineHeight = 19.sp, color = c.onSurface)
+                Text(segment, fontSize = 13.5.sp, lineHeight = 18.5.sp, color = c.onSurface)
             }
 
             val tsStr = match.value
             val sec = parseTimestampToSeconds(tsStr)
             if (sec != null) {
+                val isDark = c.surface.luminance() < 0.4f
+                val blueColor = if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7)
                 Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(c.primaryContainer)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(blueColor.copy(alpha = 0.16f))
                         .pressable { onSeekToTimestamp(sec) }
-                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                        .padding(horizontal = 5.dp, vertical = 1.dp),
                 ) {
                     Text(
                         text = tsStr,
                         fontSize = 12.5.sp,
                         fontWeight = FontWeight.Bold,
-                        color = c.onPrimaryContainer,
+                        color = blueColor,
                     )
                 }
             } else {
-                Text(tsStr, fontSize = 14.sp, lineHeight = 19.sp, color = c.onSurface)
+                Text(tsStr, fontSize = 13.5.sp, lineHeight = 18.5.sp, color = c.onSurface)
             }
             lastIdx = match.range.last + 1
         }
 
         if (lastIdx < text.length) {
             val remaining = text.substring(lastIdx)
-            Text(remaining, fontSize = 14.sp, lineHeight = 19.sp, color = c.onSurface)
+            Text(remaining, fontSize = 13.5.sp, lineHeight = 18.5.sp, color = c.onSurface)
         }
     }
 }
@@ -693,10 +884,12 @@ private fun TimelineChaptersCarousel(
             items(chapters, key = { "ch-" + it.second }) { (title, sec) ->
                 Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(10.dp))
+                        .height(32.dp)
+                        .clip(RoundedCornerShape(8.dp))
                         .background(c.secondaryContainer)
                         .pressable { onSeekToTimestamp(sec) }
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                        .padding(horizontal = 14.dp),
+                    contentAlignment = Alignment.Center,
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
@@ -708,7 +901,7 @@ private fun TimelineChaptersCarousel(
                         Spacer(Modifier.width(4.dp))
                         Text(
                             text = title,
-                            fontSize = 12.sp,
+                            fontSize = 13.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = c.onSecondaryContainer,
                             maxLines = 1,
@@ -732,19 +925,118 @@ private fun CommentRow(
     onSeekToTimestamp: ((Long) -> Unit)? = null,
 ) {
     val c = MaterialTheme.colorScheme
-    Row(Modifier.fillMaxWidth().padding(start = if (isReply) 56.dp else 16.dp, end = 16.dp, top = 12.dp, bottom = 6.dp)) {
-        ChannelAvatar(comment.avatar, comment.author, size = if (isReply) 28 else 40)
+
+    // Compact YouTube-style row for Live Stream Chat Comments
+    if (comment.ago == "live") {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ChannelAvatar(comment.avatar, comment.author, size = 22)
+            Spacer(Modifier.width(8.dp))
+            Text(
+                formatHandle(comment.displayName()),
+                fontWeight = FontWeight.Bold,
+                fontSize = 11.5.sp,
+                color = c.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 120.dp),
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                comment.text,
+                fontSize = 12.5.sp,
+                lineHeight = 16.sp,
+                color = c.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        return
+    }
+
+    val avatarSize = if (isReply) 26 else 32
+    val hasReplies = !isReply && comment.replyCount > 0 && comment.repliesToken != null
+    val open = state.replies.containsKey(comment.id)
+
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(start = if (isReply) 52.dp else 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp)
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.width(avatarSize.dp)
+        ) {
+            ChannelAvatar(comment.avatar, comment.author, size = avatarSize)
+            if (hasReplies) {
+                Spacer(Modifier.height(4.dp))
+                Box(
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .height(if (open) 40.dp else 24.dp)
+                        .width(1.5.dp)
+                        .background(c.onSurface.copy(alpha = 0.18f))
+                )
+            }
+        }
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                if (comment.pinned) Icon(Icons.Rounded.PushPin, "Pinned", tint = c.onSurfaceVariant, modifier = Modifier.size(14.dp))
-                Text(comment.displayName(), fontWeight = FontWeight.Medium, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                comment.ago?.let { Text("· $it", color = c.onSurfaceVariant, fontSize = 12.sp, maxLines = 1) }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                if (comment.pinned) {
+                    Icon(Icons.Rounded.PushPin, "Pinned", tint = c.onSurfaceVariant, modifier = Modifier.size(13.dp))
+                }
+                Text(
+                    text = formatHandle(comment.displayName()),
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 12.sp,
+                    color = c.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                val isVerified = comment.author.contains("YouTube", ignoreCase = true) || (comment.name?.contains("YouTube", ignoreCase = true) == true)
+                if (isVerified) {
+                    Icon(
+                        imageVector = Icons.Rounded.CheckCircle,
+                        contentDescription = "Verified",
+                        tint = c.onSurfaceVariant,
+                        modifier = Modifier.size(12.dp),
+                    )
+                }
+                comment.ago?.let { Text("• $it", color = c.onSurfaceVariant, fontSize = 12.sp, maxLines = 1) }
+                Spacer(Modifier.weight(1f))
+                Icon(
+                    imageVector = Icons.Rounded.MoreVert,
+                    contentDescription = "Options",
+                    tint = c.onSurfaceVariant,
+                    modifier = Modifier.size(16.dp),
+                )
             }
-            Spacer(Modifier.height(5.dp))
+            Spacer(Modifier.height(3.dp))
             CommentTextWithTimestamps(comment.text, onSeekToTimestamp)
+
+            var isTranslated by remember { mutableStateOf(false) }
+            Text(
+                text = if (isTranslated) "See original" else "Translate to Hindi",
+                color = c.onSurfaceVariant,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Normal,
+                modifier = Modifier
+                    .padding(top = 4.dp)
+                    .pressable { isTranslated = !isTranslated },
+            )
+
             if (!comment.imageUrl.isNullOrBlank()) {
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(6.dp))
                 Thumbnail(
                     url = comment.imageUrl,
                     modifier = Modifier
@@ -754,8 +1046,11 @@ private fun CommentRow(
                 )
             }
             Spacer(Modifier.height(4.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                // Like (signed in): pops like the video's like, and the count follows.
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(22.dp),
+                modifier = Modifier.padding(top = 4.dp),
+            ) {
                 val isLiked = state.liked[comment.id] == true
                 val canLike = Account.signedIn && !comment.id.startsWith("local-")
                 val likeTint = if (isLiked) c.primary else c.onSurfaceVariant
@@ -768,49 +1063,64 @@ private fun CommentRow(
                     FlourishIcon(
                         if (isLiked) Icons.Rounded.ThumbUp else Icons.Outlined.ThumbUp,
                         if (isLiked) "Unlike" else "Like",
-                        active = isLiked, kind = Flourish.Pop, tint = likeTint, size = 16.dp,
+                        active = isLiked, kind = Flourish.Pop, tint = likeTint, size = 17.dp,
                     )
                     val count = comment.likes + if (isLiked) 1 else 0
                     if (count > 0) {
-                        Spacer(Modifier.width(5.dp))
-                        Text(formatCount(count.toLong()), color = likeTint, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.width(6.dp))
+                        Text(formatCount(count.toLong()), color = likeTint, fontSize = 12.sp, fontWeight = FontWeight.Normal)
                     }
                 }
+
+                // Dislike button
+                Icon(
+                    imageVector = Icons.Outlined.ThumbDown,
+                    contentDescription = "Dislike",
+                    tint = c.onSurfaceVariant,
+                    modifier = Modifier.size(17.dp),
+                )
+
+                // Comment / Reply bubble
+                Icon(
+                    imageVector = Icons.AutoMirrored.Rounded.Comment,
+                    contentDescription = "Reply",
+                    tint = c.onSurfaceVariant,
+                    modifier = Modifier
+                        .size(17.dp)
+                        .pressable { state.startReply(comment) },
+                )
+
                 if (comment.hearted) {
-                    Spacer(Modifier.width(10.dp))
                     if (creatorName.isNotBlank()) {
                         CreatorHeartBadge(creatorAvatar, creatorName)
                     } else {
                         Icon(Icons.Rounded.Favorite, "Hearted by creator", tint = Color(0xFFE53935), modifier = Modifier.size(14.dp))
                     }
                 }
-                if (Account.signedIn && !comment.id.startsWith("local-")) {
-                    Spacer(Modifier.width(16.dp))
-                    Text(
-                        "Reply",
-                        color = c.onSurfaceVariant, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold,
-                        modifier = Modifier.pressable { state.startReply(comment) }.padding(vertical = 2.dp),
-                    )
-                }
             }
-            if (!isReply && comment.replyCount > 0 && comment.repliesToken != null) {
-                val open = state.replies.containsKey(comment.id)
+            if (hasReplies) {
                 val busy = state.repliesLoading[comment.id] == true
                 Row(
                     modifier = Modifier
-                        .padding(top = 6.dp)
-                        .pressable { if (open) state.hideReplies(comment) else state.loadReplies(comment) }
-                        .padding(vertical = 4.dp),
+                        .padding(top = 8.dp)
+                        .pressable { if (open) state.hideReplies(comment) else state.loadReplies(comment) },
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        if (open) "Hide replies" else "${comment.replyCount} ${if (comment.replyCount == 1) "reply" else "replies"}",
-                        color = c.primary,
-                        fontWeight = FontWeight.ExtraBold,
-                        fontSize = 13.sp,
+                        text = if (open) "Hide replies" else "${comment.replyCount} ${if (comment.replyCount == 1) "reply" else "replies"}",
+                        color = c.onSurface,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.5.sp,
+                    )
+                    Spacer(Modifier.width(2.dp))
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = c.onSurface,
+                        modifier = Modifier.size(16.dp),
                     )
                     if (busy) {
-                        Spacer(Modifier.width(8.dp))
+                        Spacer(Modifier.width(6.dp))
                         CircularProgressIndicator(color = c.primary, strokeWidth = 2.dp, modifier = Modifier.size(14.dp))
                     }
                 }

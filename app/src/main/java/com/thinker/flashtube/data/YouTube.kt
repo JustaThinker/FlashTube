@@ -1,6 +1,7 @@
 package com.thinker.flashtube
 
 import android.content.Context
+import com.thinker.flashtube.data.ContentRegion
 import android.content.SharedPreferences
 import androidx.compose.runtime.Immutable
 import androidx.core.text.HtmlCompat
@@ -51,7 +52,22 @@ data class VideoItem(
     val views: Long,
     val uploaded: String?,
     val localUri: String? = null,
+    val collabChannels: List<ChannelRef> = emptyList(),
+    /** Non-null for a YouTube-generated radio/mix card; [id] remains its playable first video. */
+    val mixPlaylistId: String? = null,
+    /** Recommendation feedback tokens included in the server-rendered overflow menu. */
+    val feedbackTokens: Map<String, String> = emptyMap(),
+    /** A YouTube community post surfaced inline in Home, separate from video/mix cards. */
+    val feedPost: CommunityPost? = null,
+    /** Live status provided by the YouTube feed or player response. */
+    val isLive: Boolean = false,
 )
+
+/** Stable identity for mixed Home feed rows (a mix can share its opening video with another mix). */
+val VideoItem.feedKey: String
+    get() = feedPost?.let { "post:${it.id}" }
+        ?: mixPlaylistId?.let { "mix:$it" }
+        ?: id
 
 /** `UC…` from a `…/channel/UC…` URL, when InnerTube set [channelUrl]. */
 fun VideoItem.channelId(): String? =
@@ -81,6 +97,12 @@ data class VideoDetails(
     val qualities: List<Int>,
     /** Width / height of the chosen stream, known before the first frame; null if unknown. */
     val aspect: Float? = null,
+)
+
+data class RelatedVideoDetails(
+    val videos: List<VideoItem>,
+    val continuation: String?,
+    val collaborators: List<ChannelRef>,
 )
 
 @Immutable
@@ -132,7 +154,18 @@ data class Comment(
 )
 
 @Immutable
-data class CommentsPage(val comments: List<Comment>, val total: Int, val disabled: Boolean, val next: String?)
+data class CommentsPage(
+    val comments: List<Comment>,
+    val total: Int,
+    val disabled: Boolean,
+    val next: String?,
+    val liveSendParams: String? = null,
+    val liveTimeoutMs: Long = 10_000L,
+    val liveMaxMessageLength: Int = 200,
+    val liveRestriction: String? = null,
+    val removedIds: Set<String> = emptySet(),
+    val viewerCount: String? = null,
+)
 
 /** Everything the app asks of YouTube goes through here. All calls are blocking-safe (IO). */
 object YouTube {
@@ -142,8 +175,9 @@ object YouTube {
 
     /** Public trending/popular feed for logged-out users via NewPipe's YouTube Kiosk extractor. */
     suspend fun trending(): FeedPage = withContext(Dispatchers.IO) {
-        val extractor = service.kioskList.defaultKioskExtractor
-        val info = KioskInfo.getInfo(service, extractor.url)
+        val loc = org.schabi.newpipe.extractor.localization.Localization(ContentRegion.currentLanguageCode, ContentRegion.currentRegionCode)
+        val extractor = service.kioskList.getDefaultKioskExtractor(null, loc)
+        val info = KioskInfo.getInfo(extractor)
         val videos = info.relatedItems.filterIsInstance<StreamInfoItem>().mapNotNull { it.toVideoItem() }
         val next = if (info.hasNextPage()) info.nextPage.url else null
         FeedPage(videos, next)
@@ -163,9 +197,12 @@ object YouTube {
         else service.suggestionExtractor.suggestionList(q)
     }
 
-    suspend fun details(id: String): VideoDetails = withContext(Dispatchers.IO) {
+    suspend fun details(id: String, includeRelated: Boolean = true): VideoDetails = withContext(Dispatchers.IO) {
         val info = StreamCache.getOrLoad(id)
         val picked = StreamSelection.pick(info)
+        val related = if (includeRelated) runCatching { related(id) }.getOrNull() else null
+        val relatedVideos = info.relatedItems.filterIsInstance<StreamInfoItem>().mapNotNull { it.toVideoItem() }
+
         VideoDetails(
             item = VideoItem(
                 id = id,
@@ -177,6 +214,8 @@ object YouTube {
                 durationSec = info.duration,
                 views = info.viewCount,
                 uploaded = uploadedText(info.textualUploadDate, info.uploadDate),
+                collabChannels = related?.collaborators.orEmpty(),
+                isLive = info.streamType == StreamType.LIVE_STREAM,
             ),
             description = info.description?.let { d ->
                 if (d.type == Description.HTML) HtmlCompat.fromHtml(d.content, HtmlCompat.FROM_HTML_MODE_COMPACT).toString().trim()
@@ -184,13 +223,22 @@ object YouTube {
             }.orEmpty(),
             likes = info.likeCount,
             subscribers = info.uploaderSubscriberCount,
-            related = info.relatedItems.filterIsInstance<StreamInfoItem>().mapNotNull { it.toVideoItem() },
+            related = related?.videos?.takeIf { it.isNotEmpty() } ?: relatedVideos,
+            relatedToken = related?.continuation,
             playable = picked.isPlayable,
             quality = picked.playedHeight?.let { "${it}p" },
             qualities = StreamSelection.heights(info),
             aspect = (if (picked.usesSeparate) picked.video else picked.muxed)
                 ?.takeIf { it.width > 0 && it.height > 0 }?.let { it.width.toFloat() / it.height },
         )
+    }
+
+    /** Loads recommendation/collaboration metadata separately from the critical stream lookup. */
+    suspend fun related(id: String): RelatedVideoDetails = withContext(Dispatchers.IO) {
+        val json = InnerTube.postAny("next", JSONObject().put("videoId", id))
+        val feed = runCatching { InnerTube.parseFeed(json) }.getOrNull()
+        val collaborators = runCatching { InnerTube.parseCollabChannelsFromNext(json) }.getOrDefault(emptyList())
+        RelatedVideoDetails(feed?.videos.orEmpty(), feed?.next, collaborators)
     }
 
     // ── Channels ──
@@ -221,8 +269,8 @@ object YouTube {
      * One page of a channel's uploads; [token] null for the first. Read through InnerTube
      * (not NewPipe) because only the raw page carries the "Members only" badge.
      */
-    suspend fun channelVideos(channel: ChannelDetails, token: String?): FeedPage {
-        val page = InnerTube.channelVideos(channel.id, token)
+    suspend fun channelVideos(channel: ChannelDetails, params: String? = InnerTube.CHANNEL_VIDEOS_TAB, token: String? = null): FeedPage {
+        val page = InnerTube.channelVideos(channel.id, params, token)
         // The uploads list doesn't repeat the channel on every item; fill it in.
         return page.copy(videos = page.videos.map {
             it.copy(channel = it.channel.ifBlank { channel.name }, avatar = it.avatar ?: channel.avatar, channelUrl = it.channelUrl ?: channel.url)
@@ -310,10 +358,16 @@ object StreamCache {
      * Stream URLs are signed for the network they were fetched on and expire; a stale one
      * gets HTTP 403. Dropping it forces a fresh extraction on the next load.
      */
-    fun invalidate(id: String) { entries.remove(id) }
+    fun invalidate(id: String) {
+        entries.remove(id)
+        com.thinker.flashtube.data.VideoStreamResolutionCache.invalidate(id)
+    }
 
     /** The phone switched networks: every cached URL is now bound to the old address. */
-    fun invalidateAll() = entries.clear()
+    fun invalidateAll() {
+        entries.clear()
+        com.thinker.flashtube.data.VideoStreamResolutionCache.clear()
+    }
 
     fun get(id: String): StreamInfo? =
         entries[id]?.takeIf { System.currentTimeMillis() - it.loadedAt < MAX_AGE_MS }?.info
@@ -358,6 +412,7 @@ object StreamCache {
     private val prefetcher = Executors.newSingleThreadExecutor()
 
     fun prefetch(id: String) {
+        com.thinker.flashtube.data.VideoStreamResolver.prefetch(id)
         if (get(id) != null || inflight.containsKey(id)) return
         prefetcher.execute { runCatching { getOrLoad(id) } }
     }
@@ -369,20 +424,72 @@ object StreamCache {
  */
 object QualityPreference {
     private const val KEY = "quality_height"
+    private const val KEY_WIFI_DEFAULT = "quality_wifi_default"
+    private const val KEY_MOBILE_DEFAULT = "quality_mobile_default"
+    private const val KEY_PREFER_HDR = "quality_prefer_hdr"
+
     private var prefs: SharedPreferences? = null
 
     @Volatile
     var height: Int? = null
         private set
 
+    @Volatile
+    var wifiDefaultHeight: Int? = null
+        private set
+
+    @Volatile
+    var mobileDefaultHeight: Int? = null
+        private set
+
+    @Volatile
+    var preferHdr: Boolean = false
+        private set
+
     fun init(context: Context) {
         prefs = context.getSharedPreferences("playback", Context.MODE_PRIVATE)
-        height = prefs?.getInt(KEY, 0)?.takeIf { it > 0 }?.takeIf { it in QUALITY_LADDER }
+        height = prefs?.getInt(KEY, 0)?.takeIf { it in QUALITY_LADDER }
+        wifiDefaultHeight = prefs?.getInt(KEY_WIFI_DEFAULT, 0)?.takeIf { it in QUALITY_LADDER }
+        mobileDefaultHeight = prefs?.getInt(KEY_MOBILE_DEFAULT, 0)?.takeIf { it in QUALITY_LADDER }
+        preferHdr = prefs?.getBoolean(KEY_PREFER_HDR, false) ?: false
     }
 
     fun set(value: Int?) {
-        height = value
-        prefs?.edit()?.putInt(KEY, value ?: 0)?.apply()
+        val supported = value?.takeIf { it in QUALITY_LADDER }
+        height = supported
+        prefs?.edit()?.putInt(KEY, supported ?: 0)?.apply()
+    }
+
+    fun setWifiDefault(value: Int?) {
+        val supported = value?.takeIf { it in QUALITY_LADDER }
+        wifiDefaultHeight = supported
+        prefs?.edit()?.putInt(KEY_WIFI_DEFAULT, supported ?: 0)?.apply()
+    }
+
+    fun setMobileDefault(value: Int?) {
+        val supported = value?.takeIf { it in QUALITY_LADDER }
+        mobileDefaultHeight = supported
+        prefs?.edit()?.putInt(KEY_MOBILE_DEFAULT, supported ?: 0)?.apply()
+    }
+
+    fun setPreferHdr(enabled: Boolean) {
+        preferHdr = enabled
+        prefs?.edit()?.putBoolean(KEY_PREFER_HDR, enabled)?.apply()
+    }
+
+    fun isNetworkMetered(context: Context): Boolean {
+        return try {
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
+            cm?.isActiveNetworkMetered ?: false
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    fun getEffectiveTargetHeight(context: Context): Int? {
+        if (height != null) return height
+        val metered = isNetworkMetered(context)
+        return if (metered) mobileDefaultHeight else wifiDefaultHeight
     }
 }
 
@@ -407,8 +514,8 @@ private fun VideoStream.tier() = qualityTier(width, height)
 
 /** Chooses which of YouTube's many streams to play. */
 object StreamSelection {
-    /** Above this tier, phones gain little and pay a lot in data. */
-    private const val MAX_TIER = 1080
+    /** Highest available tier supported (up to 8K 4320p). */
+    private const val MAX_TIER = 4320
 
     data class Picked(val video: VideoStream?, val audio: AudioStream?, val muxed: VideoStream?, val isLive: Boolean = false) {
         val isPlayable get() = (video != null && audio != null) || muxed != null || isLive
@@ -422,28 +529,23 @@ object StreamSelection {
         if (!info.hlsUrl.isNullOrBlank() || info.streamType == StreamType.LIVE_STREAM) {
             return Picked(video = null, audio = null, muxed = null, isLive = true)
         }
-        // H.264 first: every device decodes it in hardware. VP9 next, anything else last.
-        fun formatRank(format: MediaFormat?) = when (format) {
-            MediaFormat.MPEG_4 -> 0
-            MediaFormat.WEBM -> 1
-            else -> 2
-        }
         val candidates = info.videoOnlyStreams
-            .filter { it.isUrl && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP && it.height > 0 }
+            .filter { it.isUrl && (it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP || it.deliveryMethod == DeliveryMethod.DASH) && it.height > 0 }
         val chosen = QualityPreference.height
-        // A chosen tier plays exactly if offered, else the nearest below. Auto caps at 1080p.
-        val ceiling = chosen ?: MAX_TIER
-        val video = (candidates.filter { it.tier() <= ceiling }.ifEmpty { candidates })
-            .sortedWith(
-                compareBy<VideoStream> { if (it.tier() <= ceiling) ceiling - it.tier() else it.tier() }
-                    .thenBy { formatRank(it.format) },
-            )
-            .firstOrNull()
-        // The original language is preferred, but ANY audio track beats none: with no
-        // accepted audio the player fell back to the 360p combined stream while the label
-        // still said 1080p (the blurry-video bug, 2026-10-04).
+        val video = if (chosen != null) {
+            candidates.filter { it.tier() == chosen || it.height == chosen }
+                .maxByOrNull { it.fps * 100_000L + it.bitrate }
+                ?: candidates.filter { it.tier() <= chosen || it.height <= chosen }
+                    .maxByOrNull { it.height }
+                ?: candidates.maxByOrNull { it.height }
+        } else {
+            candidates.sortedWith(
+                compareByDescending<VideoStream> { it.tier() }
+                    .thenByDescending { it.fps * 100_000L + it.bitrate },
+            ).firstOrNull()
+        }
         val audio = info.audioStreams
-            .filter { it.isUrl && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP }
+            .filter { it.isUrl && (it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP || it.deliveryMethod == DeliveryMethod.DASH) }
             .sortedWith(
                 compareBy<AudioStream> { if (it.audioTrackType == null || it.audioTrackType == AudioTrackType.ORIGINAL) 0 else 1 }
                     .thenBy { if (it.format == MediaFormat.M4A) 0 else 1 }
@@ -451,30 +553,33 @@ object StreamSelection {
             )
             .firstOrNull()
         val muxed = info.videoStreams
-            .filter { it.isUrl && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP }
+            .filter { it.isUrl && (it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP || it.deliveryMethod == DeliveryMethod.DASH) }
             .maxByOrNull { it.height }
         return Picked(video, audio, muxed)
     }
 
     /**
-     * The Auto ladder: one codec family (H.264 if offered, else VP9 — the player won't
-     * switch between codecs), one stream per height (highest frame rate wins), up to 1080p.
+     * The Auto ladder: prefer WEBM / VP9 / AV1 (which support up to 4K / 8K, unlike AVC
+     * which caps at 1080p), one stream per height tier (highest frame rate wins).
      * Played as a single adaptive DASH set, so playback starts at whatever the connection
      * can sustain immediately and climbs, like YouTube.
      */
     fun autoLadder(info: StreamInfo): List<VideoStream> {
         val usable = info.videoOnlyStreams.filter {
-            it.isUrl && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP && it.tier() in 1..MAX_TIER && it.itagItem != null
+            it.isUrl && (it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP || it.deliveryMethod == DeliveryMethod.DASH) && it.tier() in 1..MAX_TIER && it.itagItem != null
         }
-        val family = usable.filter { it.codec?.startsWith("avc") == true }.ifEmpty { usable.filter { it.format == MediaFormat.WEBM } }
+        val family = usable.filter { it.format == MediaFormat.WEBM || it.codec?.contains("vp") == true || it.codec?.contains("av01") == true }
+            .ifEmpty { usable.filter { it.codec?.startsWith("avc") == true } }
+            .ifEmpty { usable }
         return family.groupBy { it.tier() }
             .map { (_, sameTier) -> sameTier.maxBy { it.fps * 100_000L + it.bitrate } }
             .sortedBy { it.tier() }
     }
 
-    fun heights(info: StreamInfo): List<Int> = info.videoOnlyStreams
-        .filter { it.isUrl && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP && it.height > 0 }
+    fun heights(info: StreamInfo): List<Int> = (info.videoOnlyStreams + info.videoStreams)
+        .filter { it.isUrl && (it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP || it.deliveryMethod == DeliveryMethod.DASH) && it.height > 0 }
         .map { it.tier() }
+        .filter { it in 1..MAX_TIER }
         .distinct()
         .sortedDescending()
 }
@@ -531,16 +636,19 @@ fun normalizeChannelAvatarUrl(url: String): String {
 
 /** InnerTube feed rows often ship =s68 avatars; the subscriptions rail uses much larger art. */
 fun sharpenChannelAvatarUrl(url: String, minEdgePx: Int): String {
+    val isYtc = "/ytc/" in url
+    val rawEdge = Regex("=s(\\d+)").find(url)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
     val normalized = normalizeChannelAvatarUrl(url)
     val m = Regex("=s(\\d+)").find(normalized) ?: return normalized
     val current = m.groupValues[1].toIntOrNull() ?: return normalized
-    if ("/ytc/" in normalized && current > 96 && "googleusercontent.com" !in normalized) {
+    if (isYtc && (rawEdge > 96 || current > 96)) {
+        return normalized.replace(Regex("=s\\d+"), "=s96")
+    }
+    if (isYtc) {
         return normalized.replace(Regex("=s\\d+"), "=s96")
     }
     if (current >= minEdgePx) return normalized
-    // Legacy `ytc/` icons 404 above ~96; googleusercontent channel art can go much higher.
-    val ceiling = if ("/ytc/" in normalized && "googleusercontent.com" !in normalized) 96 else 800
-    val edge = minOf(minEdgePx, ceiling).coerceAtLeast(current)
+    val edge = minOf(minEdgePx, 800).coerceAtLeast(current)
     return normalized.replace(Regex("=s\\d+"), "=s$edge")
 }
 

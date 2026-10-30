@@ -1,5 +1,7 @@
 package com.thinker.flashtube
 
+import com.thinker.flashtube.ui.player.components.SkimmerPreviewCard
+import com.thinker.flashtube.ui.player.components.PlainIconButton
 import android.app.Activity
 import android.content.Context
 import android.media.AudioManager
@@ -63,7 +65,6 @@ import androidx.compose.material.icons.rounded.CropFree
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.FastForward
 import androidx.compose.material.icons.rounded.FastRewind
-import androidx.compose.material.icons.rounded.Forward10
 import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.FullscreenExit
 import androidx.compose.material.icons.rounded.Headphones
@@ -75,15 +76,18 @@ import androidx.compose.material.icons.rounded.PictureInPictureAlt
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.PlayCircle
 import androidx.compose.material.icons.rounded.Repeat
+import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.RepeatOne
-import androidx.compose.material.icons.rounded.Replay10
+import com.thinker.flashtube.data.ContentRegion
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.SkipNext
+import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.ZoomIn
 import androidx.compose.ui.composed
 import androidx.compose.ui.graphics.luminance
+import com.thinker.flashtube.ui.player.components.PlayerPlayPauseGlyph
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalView
@@ -194,11 +198,7 @@ fun VideoContent(
         delay(SeekBurstWindowMs)
         burstActive = false
     }
-    // Each tap nudges the picture a few dp the way it seeks (scaled up so no edge shows).
-    val nudge = remember { Animatable(0f) }
-    LaunchedEffect(burstTaps) {
-        if (burstTaps > 0 && !reduced) nudge.animateTo(0f, keyframes { durationMillis = 440; 1f at 130 })
-    }
+    // Double-tap seek burst feedback
     LaunchedEffect(interactive) {
         if (!interactive) {
             controlsVisible = false
@@ -425,11 +425,9 @@ fun VideoContent(
                     .fillMaxSize()
                     .aspectFit(state.videoAspect, cover = state.zoomToFill)
                     .graphicsLayer {
-                        val n = nudge.value
-                        translationX = burstSide * 5.dp.toPx() * n
                         val z = state.videoZoom
-                        scaleX = (1f + 0.03f * n) * z
-                        scaleY = (1f + 0.03f * n) * z
+                        scaleX = z
+                        scaleY = z
                     },
             ) {
                 // Under the (transparent until it has a frame) TextureView, so opening or
@@ -507,6 +505,13 @@ fun VideoContent(
         if (!scrubbing) {
             SkippedNote(state, Modifier.align(Alignment.TopCenter).padding(top = 12.dp).graphicsLayer { alpha = controlsAlpha() })
         }
+        if (state.statsForNerdsOpen) {
+            StatsForNerdsOverlay(
+                state = state,
+                onClose = { state.toggleStatsForNerds() },
+                modifier = Modifier.align(Alignment.Center),
+            )
+        }
         // The Ask pill stays reachable while the controls are hidden.
         if (!scrubbing && !controlsVisible) {
             state.askSegment?.let { segment ->
@@ -578,24 +583,57 @@ fun VideoContent(
                 }
                 Row(
                     modifier = Modifier.align(Alignment.Center),
-                    horizontalArrangement = Arrangement.spacedBy(if (fullscreen) 56.dp else 30.dp),
+                    horizontalArrangement = Arrangement.spacedBy(if (fullscreen) 44.dp else 32.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    val skip = if (fullscreen) 56.dp else 48.dp
-                    GlassButton(Icons.Rounded.Replay10, "Back 10 seconds", enabled, size = skip, iconSize = skip * 0.62f) {
-                        touched(); state.seekBy(-10_000)
+                    val prevNextSize = if (fullscreen) 56.dp else 48.dp
+                    val iconSize = if (fullscreen) 36.dp else 30.dp
+
+                    // Previous Video (Clean unboxed icon)
+                    PlainIconButton(
+                        icon = Icons.Rounded.SkipPrevious,
+                        description = "Previous video",
+                        enabled = enabled,
+                        size = prevNextSize,
+                        iconSize = iconSize,
+                    ) {
+                        touched()
+                        val c = state.controller
+                        if (c != null && c.hasPreviousMediaItem()) {
+                            c.seekToPreviousMediaItem()
+                        } else {
+                            state.seekBy(-10_000)
+                        }
                     }
+
+                    // Center Play / Pause (Clean unboxed icon)
                     MorphPlayButton(
                         playing = state.isPlaying,
-                        buffering = state.isBuffering || (state.loading && state.details == null),
-                        size = if (fullscreen) 76.dp else 66.dp,
-                        // Same glass as the skip buttons.
-                        container = Color.Black.copy(alpha = 0.38f),
+                        buffering = !state.isPlaying && (state.isBuffering || (state.loading && state.details == null)),
+                        size = if (fullscreen) 72.dp else 60.dp,
+                        container = Color.Transparent,
                         content = Color.White,
                         enabled = enabled,
-                    ) { touched(); state.togglePlay() }
-                    GlassButton(Icons.Rounded.Forward10, "Forward 10 seconds", enabled, size = skip, iconSize = skip * 0.62f) {
-                        touched(); state.seekBy(10_000)
+                    ) {
+                        touched()
+                        state.togglePlay()
+                    }
+
+                    // Next Video (Clean unboxed icon)
+                    PlainIconButton(
+                        icon = Icons.Rounded.SkipNext,
+                        description = "Next video",
+                        enabled = enabled,
+                        size = prevNextSize,
+                        iconSize = iconSize,
+                    ) {
+                        touched()
+                        val c = state.controller
+                        if (c != null && c.hasNextMediaItem()) {
+                            c.seekToNextMediaItem()
+                        } else {
+                            state.seekBy(SeekConfig.stepMs)
+                        }
                     }
                 }
                 Column(
@@ -691,8 +729,9 @@ fun VideoContent(
             )
         }
         if (scrubbing && scrubPreviewMs != null) {
-            Box(
-                Modifier
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
                     .then(
@@ -705,112 +744,27 @@ fun VideoContent(
                             EdgeScrubTimeRowBottomPad
                         },
                     )
-                    .height(EdgeScrubTimeRowHeight)
                     .zIndex(11f),
-                contentAlignment = Alignment.Center,
             ) {
-                Text(
-                    formatDuration(scrubPreviewMs),
-                    color = Color.White,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
+                SkimmerPreviewCard(
+                    videoId = state.current?.id,
+                    positionMs = scrubPreviewMs,
+                    visible = scrubbing,
                 )
-            }
-        }
-    }
-}
-
-/**
- * The stage in audio only (Derek, 2026-10-13): no picture, just bigger playback controls
- * (78 dp play, 58 dp skips) and a thicker scrubber, always shown, on a tonal container. The
- * thumbnail sits underneath at the stage's centred 16:9 window and shows through as it
- * shrinks, so it lands as the mini-player, which shows the thumbnail in audio only.
- */
-@Composable
-fun AudioOnlyStage(
-    state: PlayerState,
-    interactive: Boolean,
-    onInactiveTap: () -> Unit,
-    progress: () -> Float,
-    controlsAlpha: () -> Float,
-    modifier: Modifier = Modifier,
-) {
-    val c = MaterialTheme.colorScheme
-    val currentInteractive by androidx.compose.runtime.rememberUpdatedState(interactive)
-    val currentInactiveTap by androidx.compose.runtime.rememberUpdatedState(onInactiveTap)
-    // While collapsing the controls are off (their taps fall through): a tap re-expands.
-    Box(modifier.pointerInput(Unit) { detectTapGestures { if (!currentInteractive) currentInactiveTap() } }) {
-        Box(Modifier.align(Alignment.Center).fillMaxHeight().aspectRatio(16f / 9f)) {
-            Thumbnail(state.current?.thumbnail, Modifier.fillMaxSize(), radius = 0)
-        }
-        Box(Modifier.fillMaxSize().graphicsLayer { alpha = ramp(progress(), 0.25f, 0.85f) }.background(c.surfaceContainer))
-        val error = state.error
-        if (error != null) {
-            ErrorPanel(error, onRetry = state::retry, onCollapse = {})
-            return@Box
-        }
-        Column(
-            Modifier.fillMaxSize().graphicsLayer { alpha = controlsAlpha() }.padding(horizontal = 20.dp),
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(30.dp, Alignment.CenterHorizontally),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                TonalSkip(Icons.Rounded.Replay10, "Back 10 seconds", interactive) { state.seekBy(-10_000) }
-                MorphPlayButton(
-                    playing = state.isPlaying,
-                    buffering = state.isBuffering || (state.loading && state.details == null),
-                    size = 78.dp,
-                    container = c.primary,
-                    content = c.onPrimary,
-                    enabled = interactive,
-                ) { state.togglePlay() }
-                TonalSkip(Icons.Rounded.Forward10, "Forward 10 seconds", interactive) { state.seekBy(10_000) }
-            }
-            Spacer(Modifier.height(8.dp))
-            var scrubPreview by remember { mutableStateOf<Long?>(null) }
-            Scrubber(
-                segments = if (SponsorBlock.enabled) state.segments.filter { it.action != SponsorBlock.Action.Off } else emptyList(),
-                positionMs = state.positionMs,
-                bufferedMs = state.bufferedMs,
-                durationMs = state.durationMs,
-                enabled = interactive,
-                onPreview = { scrubPreview = it },
-                onSeek = { scrubPreview = null; state.seekTo(it) },
-                track = c.surfaceContainerHighest,
-                buffered = c.primary.copy(alpha = 0.3f),
-                played = c.primary,
-                trackHeight = 6.dp,
-                knob = 8.dp,
-                knobDragging = 10.dp,
-            )
-            Row(Modifier.fillMaxWidth().height(28.dp), verticalAlignment = Alignment.CenterVertically) {
-                val time = Modifier.width(56.dp)
-                Text(formatDuration(scrubPreview ?: state.positionMs), color = c.onSurfaceVariant, fontSize = 12.5.sp, fontWeight = FontWeight.ExtraBold, modifier = time)
-                // SponsorBlock's Ask pill, or the note after an automatic skip, between the times.
-                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                    val ask = state.askSegment
-                    if (ask != null) SkipSegmentPill(ask, enabled = interactive) { state.skipSegment(ask) }
-                    else SkippedNote(state, Modifier)
+                Box(
+                    modifier = Modifier.height(EdgeScrubTimeRowHeight),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        formatDuration(scrubPreviewMs),
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
                 }
-                Text(
-                    formatDuration(state.durationMs), color = c.onSurfaceVariant, fontSize = 12.5.sp, fontWeight = FontWeight.ExtraBold,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.End, modifier = time,
-                )
             }
         }
     }
-}
-
-@Composable
-private fun TonalSkip(icon: ImageVector, description: String, enabled: Boolean, onClick: () -> Unit) {
-    val c = MaterialTheme.colorScheme
-    Box(
-        Modifier.size(58.dp).pressable(enabled = enabled, onClick = onClick).clip(CircleShape).background(c.surfaceContainerHigh),
-        contentAlignment = Alignment.Center,
-    ) { Icon(icon, description, tint = c.onSurface, modifier = Modifier.size(34.dp)) }
 }
 
 /**
@@ -926,6 +880,13 @@ fun QualitySheet(state: PlayerState, onDismiss: () -> Unit) {
     val c = MaterialTheme.colorScheme
     val details = state.details ?: return
     val chosen = QualityPreference.height
+    val context = LocalContext.current
+    val isMetered = remember(context) { QualityPreference.isNetworkMetered(context) }
+    val cachedInfo = remember(details.item.id) { StreamCache.get(details.item.id) }
+    val qualities = remember(details.qualities, cachedInfo) {
+        val fromInfo = cachedInfo?.let { StreamSelection.heights(it) }.orEmpty()
+        (fromInfo + details.qualities).filter { it > 0 }.distinct().sortedDescending()
+    }
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -956,13 +917,15 @@ fun QualitySheet(state: PlayerState, onDismiss: () -> Unit) {
 
             Spacer(Modifier.height(6.dp))
 
-            val autoDesc = "Best up to 1080p" + ((state.decodedHeight?.let { "${it}p" } ?: details.quality)?.let { " · $it" } ?: "")
+            val networkType = if (isMetered) "Mobile Data · max 720p" else "Wi-Fi · up to 1080p/2160p"
+            val activeLabel = (state.decodedHeight?.let { "${it}p" } ?: details.quality)
+            val autoDesc = "Auto ($networkType)" + (activeLabel?.let { " · $it" } ?: "")
             QualityRow("Auto", autoDesc, chosen == null) {
                 state.setQuality(null)
                 onDismiss()
             }
 
-            details.qualities.forEach { h ->
+            qualities.forEach { h ->
                 QualityRow("${h}p", qualityTag(h), chosen == h) {
                     state.setQuality(h)
                     onDismiss()
@@ -973,8 +936,9 @@ fun QualitySheet(state: PlayerState, onDismiss: () -> Unit) {
 }
 
 private fun qualityTag(height: Int): String? = when {
+    height >= 4320 -> "8K"
     height >= 2160 -> "4K"
-    height >= 1440 -> "QHD"
+    height >= 1440 -> "2K"
     height >= 1080 -> "Full HD"
     height >= 720 -> "HD"
     height <= 240 -> "Data saver"
@@ -1264,14 +1228,6 @@ fun PlayerSettingsSheet(state: PlayerState, onDismiss: () -> Unit) {
                         onCheckedChange = { state.toggleAutoPlay() },
                     )
 
-                    // Audio Only
-                    CompactPlayerSwitchRow(
-                        icon = Icons.Rounded.Headphones,
-                        title = "Audio only",
-                        checked = AudioOnly.enabled,
-                        onCheckedChange = { state.setAudioOnly(!AudioOnly.enabled) },
-                    )
-
                     // Video aspect (Zoom to fill)
                     CompactPlayerSwitchRow(
                         icon = if (state.zoomToFill) Icons.Rounded.AspectRatio else Icons.Rounded.CropFree,
@@ -1288,6 +1244,77 @@ fun PlayerSettingsSheet(state: PlayerState, onDismiss: () -> Unit) {
                             value = "${(state.videoZoom * 10).toInt() / 10f}×",
                             onClick = { state.resetZoom() },
                         )
+                    }
+                }
+                "region" -> {
+                    // Header with back arrow
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .pressable { currentSubMenu = null },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Rounded.ArrowBack,
+                                contentDescription = "Back",
+                                tint = c.onSurface,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            "Content region",
+                            fontFamily = RoundedHeavy,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 17.sp,
+                            color = c.onSurface,
+                        )
+                    }
+
+                    Spacer(Modifier.height(4.dp))
+
+                    ContentRegion.supportedRegions.forEach { item ->
+                        val selected = ContentRegion.code == item.code
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .pressable(pressedScale = 0.98f) {
+                                    ContentRegion.setRegion(item.code)
+                                    currentSubMenu = null
+                                }
+                                .padding(horizontal = 20.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = item.name,
+                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                                    fontSize = 15.sp,
+                                    color = if (selected) c.primary else c.onSurface,
+                                )
+                                if (item.code != ContentRegion.AUTO_REGION) {
+                                    Text(
+                                        text = "Region code: ${item.code}",
+                                        fontSize = 12.sp,
+                                        color = c.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                            if (selected) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Check,
+                                    contentDescription = "Selected",
+                                    tint = c.primary,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            }
+                        }
                     }
                 }
                 else -> {
@@ -1344,7 +1371,15 @@ fun PlayerSettingsSheet(state: PlayerState, onDismiss: () -> Unit) {
                         onClick = { currentSubMenu = "audio" },
                     )
 
-                    // 5. More options (Contains loop, autoplay, audio only, aspect, zoom)
+                    // 5. Content region (Country/location for feed and search)
+                    CompactPlayerNavRow(
+                        icon = Icons.Rounded.Public,
+                        title = "Content region",
+                        value = ContentRegion.displaySummary,
+                        onClick = { currentSubMenu = "region" },
+                    )
+
+                    // 6. More options (loop, autoplay, aspect, zoom)
                     CompactPlayerNavRow(
                         icon = Icons.Rounded.Tune,
                         title = "More options",
@@ -1467,7 +1502,7 @@ private fun GlassButton(
     ) { Icon(icon, description, tint = Color.White, modifier = Modifier.size(iconSize)) }
 }
 
-private const val SeekStepMs = 10_000L
+private val SeekStepMs: Long get() = SeekConfig.stepMs
 /** A burst stays open this long after its last tap; further taps on that side add to it. */
 private const val SeekBurstWindowMs = 600L
 
@@ -1586,21 +1621,16 @@ fun MorphPlayButton(
         if (buffering) {
             CircularProgressIndicator(color = content, strokeWidth = 3.dp, modifier = Modifier.size(size * 0.42f))
         } else {
-            Icon(
-                if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                if (playing) "Pause" else "Play",
-                tint = content,
-                modifier = Modifier.size(size * 0.46f),
-            )
+            PlayerPlayPauseGlyph(playing = playing, color = content, size = 33.dp)
         }
     }
 }
 
 private val ScrubberActiveRed = Color(0xFFFF0033)
 
-/** Touch above the bar (on the video) and below it (into the page — the list must not steal this). */
-internal val EdgeScrubTouchPadAbove = 14.dp
-internal val EdgeScrubTouchPadBelow = 36.dp
+/** Touch area tight over the progress line so scrolling chips below never accidentally scrubs. */
+internal val EdgeScrubTouchPadAbove = 8.dp
+internal val EdgeScrubTouchPadBelow = 2.dp
 internal val EdgeScrubTouchHeight = EdgeScrubTouchPadAbove + EdgeScrubTouchPadBelow
 /** Current / total row above the bar (fullscreen chip sets the row height). */
 private val EdgeScrubTimeRowBottomPad = EdgeScrubTouchPadAbove + 6.dp

@@ -28,6 +28,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.FastForward
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Verified
@@ -47,6 +48,13 @@ import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.geometry.Size
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Outline
@@ -62,6 +70,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalDensity
 import coil.compose.AsyncImage
@@ -69,6 +78,41 @@ import kotlin.math.roundToInt
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
+
+/**
+ * Animated Shimmer effect modifier for image/media loading placeholders.
+ */
+@Composable
+fun Modifier.shimmer(
+    shape: Shape = RoundedCornerShape(10.dp),
+    backgroundColor: Color = MaterialTheme.colorScheme.surfaceContainerHigh,
+    shimmerColor: Color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+): Modifier {
+    val transition = rememberInfiniteTransition(label = "shimmer")
+    val translateAnim by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1000f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1200, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "shimmerTranslate",
+    )
+
+    val brush = Brush.linearGradient(
+        colors = listOf(
+            backgroundColor,
+            shimmerColor,
+            backgroundColor,
+        ),
+        start = Offset(translateAnim - 300f, translateAnim - 300f),
+        end = Offset(translateAnim, translateAnim),
+    )
+
+    return this
+        .clip(shape)
+        .background(brush)
+}
 
 // ── Shapes ─────────────────────────────────────────────────────────────────────
 
@@ -311,6 +355,38 @@ fun DurationPill(seconds: Long, modifier: Modifier = Modifier, small: Boolean = 
 }
 
 /**
+ * Formats channel names for collaborative videos:
+ * - 0 channels: returns [defaultName]
+ * - 1 channel: returns channel name
+ * - 2 channels: "Channel A and Channel B"
+ * - >2 channels: "Channel A and X more" (where X = size - 1)
+ */
+fun formatCollabNames(channels: List<ChannelRef>, defaultName: String = ""): String {
+    if (channels.isEmpty()) return defaultName
+    if (channels.size == 1) return channels[0].name
+    if (channels.size == 2) return "${channels[0].name} and ${channels[1].name}"
+    return "${channels[0].name} and ${channels.size - 1} more"
+}
+
+/**
+ * Formats handles for collaborative videos:
+ * - 0 channels: returns [defaultHandleOrName]
+ * - 1 channel: "@handle"
+ * - 2 channels: "@handle1 and @handle2"
+ * - >2 channels: "@handle1 and X more"
+ */
+fun formatCollabHandles(channels: List<ChannelRef>, defaultHandleOrName: String = ""): String {
+    if (channels.isEmpty()) return defaultHandleOrName
+    fun cleanHandle(ch: ChannelRef): String {
+        val nameHandle = ch.name.lowercase().replace(" ", "")
+        return if (nameHandle.startsWith("@")) nameHandle else "@$nameHandle"
+    }
+    if (channels.size == 1) return cleanHandle(channels[0])
+    if (channels.size == 2) return "${cleanHandle(channels[0])} and ${cleanHandle(channels[1])}"
+    return "${cleanHandle(channels[0])} and ${channels.size - 1} more"
+}
+
+/**
  * A channel's (or the account's) picture: always a circle, as on YouTube (Derek, 2026-10-10).
  * Only someone with no picture at all gets the cookie-shaped initial.
  */
@@ -319,27 +395,49 @@ fun ChannelAvatar(
     url: String?,
     name: String,
     size: Int = 40,
+    channelId: String? = null,
     selected: Boolean = false,
     ringSlot: Boolean = false,
     isLive: Boolean = false,
+    collabChannels: List<ChannelRef> = emptyList(),
 ) {
+    if (collabChannels.size >= 2) {
+        CollabChannelAvatar(
+            channels = collabChannels,
+            size = size,
+            isLive = isLive,
+        )
+        return
+    }
+
+    val effectiveUrl = url ?: channelId?.let { ChannelAvatars.known[it] }
     val c = MaterialTheme.colorScheme
     val density = LocalDensity.current
     val minPx = remember(size, density) {
         (size.dp.value * density.density * 2f).roundToInt().coerceIn(88, 240)
     }
-    val model = remember(url, minPx) { url?.let { sharpenChannelAvatarUrl(normalizeChannelAvatarUrl(it), minPx) } }
-    val outer = if (ringSlot || isLive) (size + 6).dp else size.dp
+    val model = remember(effectiveUrl, minPx) { effectiveUrl?.let { sharpenChannelAvatarUrl(normalizeChannelAvatarUrl(it), minPx) } }
+
+    val ringPadding = when {
+        size < 32 -> 4.dp
+        size < 50 -> 5.dp
+        else -> 6.dp
+    }
+    val ringBorderWidth = when {
+        size < 32 -> 1.5.dp
+        else -> 2.dp
+    }
+    val outer = if (ringSlot || isLive) (size.dp + ringPadding) else size.dp
 
     Box(modifier = Modifier.size(outer), contentAlignment = Alignment.Center) {
         if (isLive) {
-            Box(Modifier.fillMaxSize().border(2.dp, Color(0xFFE53935), CircleShape))
+            Box(Modifier.fillMaxSize().border(ringBorderWidth, Color(0xFFE53935), CircleShape))
         } else if (selected) {
-            Box(Modifier.fillMaxSize().border(2.dp, Color.White, CircleShape))
+            Box(Modifier.fillMaxSize().border(ringBorderWidth, Color.White, CircleShape))
         }
 
         Box(
-            modifier = Modifier.size(size.dp).clip(if (url != null) CircleShape else CookieShape).background(c.tertiaryContainer),
+            modifier = Modifier.size(size.dp).clip(if (effectiveUrl != null) CircleShape else CookieShape).background(c.tertiaryContainer),
             contentAlignment = Alignment.Center,
         ) {
             Text(
@@ -354,31 +452,216 @@ fun ChannelAvatar(
         }
 
         if (isLive) {
+            val badgeFontSize = when {
+                size < 32 -> 6.5.sp
+                size < 50 -> 8.sp
+                size < 70 -> 9.5.sp
+                else -> 11.sp
+            }
+            val badgeHorizontalPadding = when {
+                size < 32 -> 2.5.dp
+                size < 50 -> 3.5.dp
+                size < 70 -> 4.5.dp
+                else -> 6.dp
+            }
+            val badgeVerticalPadding = when {
+                size < 32 -> 0.5.dp
+                size < 50 -> 1.dp
+                else -> 1.5.dp
+            }
+            val badgeOffsetY = when {
+                size < 32 -> 1.dp
+                size < 50 -> 2.dp
+                else -> 3.dp
+            }
+            val badgeCornerRadius = when {
+                size < 32 -> 2.dp
+                size < 50 -> 3.dp
+                else -> 4.dp
+            }
+
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .offset(y = 2.dp)
-                    .clip(RoundedCornerShape(3.dp))
+                    .offset(y = badgeOffsetY)
+                    .clip(RoundedCornerShape(badgeCornerRadius))
                     .background(Color(0xFFE53935))
-                    .padding(horizontal = 4.dp, vertical = 1.dp),
+                    .padding(horizontal = badgeHorizontalPadding, vertical = badgeVerticalPadding),
+                contentAlignment = Alignment.Center,
             ) {
                 Text(
                     text = "LIVE",
                     color = Color.White,
-                    fontSize = 8.sp,
+                    fontSize = badgeFontSize,
                     fontWeight = FontWeight.ExtraBold,
-                    lineHeight = 8.sp,
+                    lineHeight = badgeFontSize,
                 )
             }
         }
     }
 }
 
+/**
+ * Compact representation of multiple collab channel avatars fitting within the specified [size] dimension.
+ * Avatars are arranged in a clean overlapping circle layout with a surface separation ring.
+ */
+@Composable
+fun CollabChannelAvatar(
+    channels: List<ChannelRef>,
+    size: Int = 40,
+    isLive: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
+    val c = MaterialTheme.colorScheme
+    val outer = if (isLive) (size + 6).dp else size.dp
+
+    Box(modifier = modifier.size(outer), contentAlignment = Alignment.Center) {
+        if (isLive) {
+            Box(Modifier.fillMaxSize().border(2.dp, Color(0xFFE53935), CircleShape))
+        }
+
+        Box(Modifier.size(size.dp)) {
+            if (channels.size >= 3) {
+                // 3 or more channels: 3-avatar triangular overlapping layout
+                val avatarSize = (size * 0.58f).dp
+                val ch1 = channels.getOrNull(0)
+                val ch2 = channels.getOrNull(1)
+                val ch3 = channels.getOrNull(2)
+
+                if (ch1 != null) {
+                    SingleCollabAvatarCircle(
+                        url = ch1.avatar,
+                        channelId = ch1.id,
+                        name = ch1.name,
+                        size = avatarSize,
+                        modifier = Modifier.align(Alignment.TopCenter),
+                    )
+                }
+                if (ch2 != null) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .background(c.surface, CircleShape)
+                            .padding(1.dp)
+                    ) {
+                        SingleCollabAvatarCircle(
+                            url = ch2.avatar,
+                            channelId = ch2.id,
+                            name = ch2.name,
+                            size = avatarSize,
+                        )
+                    }
+                }
+                if (ch3 != null) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .background(c.surface, CircleShape)
+                            .padding(1.dp)
+                    ) {
+                        SingleCollabAvatarCircle(
+                            url = ch3.avatar,
+                            channelId = ch3.id,
+                            name = ch3.name,
+                            size = avatarSize,
+                        )
+                    }
+                }
+            } else {
+                // 2 channels: 2-avatar diagonal overlapping layout
+                val avatarSize = (size * 0.68f).dp
+                val ch1 = channels.getOrNull(0)
+                val ch2 = channels.getOrNull(1)
+
+                if (ch1 != null) {
+                    SingleCollabAvatarCircle(
+                        url = ch1.avatar,
+                        channelId = ch1.id,
+                        name = ch1.name,
+                        size = avatarSize,
+                        modifier = Modifier.align(Alignment.TopStart),
+                    )
+                }
+                if (ch2 != null) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .background(c.surface, CircleShape)
+                            .padding(1.5.dp)
+                    ) {
+                        SingleCollabAvatarCircle(
+                            url = ch2.avatar,
+                            channelId = ch2.id,
+                            name = ch2.name,
+                            size = avatarSize,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SingleCollabAvatarCircle(
+    url: String?,
+    channelId: String? = null,
+    name: String,
+    size: Dp,
+    modifier: Modifier = Modifier,
+) {
+    val c = MaterialTheme.colorScheme
+    val density = LocalDensity.current
+    val effectiveUrl = url ?: channelId?.let { ChannelAvatars.known[it] }
+    val minPx = remember(size, density) {
+        (size.value * density.density * 2f).roundToInt().coerceIn(60, 240)
+    }
+    val model = remember(effectiveUrl, minPx) { effectiveUrl?.let { sharpenChannelAvatarUrl(normalizeChannelAvatarUrl(it), minPx) } }
+
+    Box(
+        modifier = modifier
+            .size(size)
+            .clip(if (effectiveUrl != null) CircleShape else CookieShape)
+            .background(c.tertiaryContainer),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            name.trim().trimStart('@').take(1).uppercase(),
+            color = c.onTertiaryContainer,
+            fontWeight = FontWeight.Black,
+            fontSize = (size.value * 0.38f).sp,
+        )
+        if (model != null) {
+            AsyncImage(
+                model = model,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.size(size),
+            )
+        }
+    }
+}
+
 /** Full-width feed row: edge-to-edge thumbnail, then avatar + title + meta + 3-dots menu. */
 @Composable
-fun VideoCard(video: VideoItem, onClick: () -> Unit, modifier: Modifier = Modifier) {
+fun VideoCard(video: VideoItem, onClick: () -> Unit, modifier: Modifier = Modifier, radius: Int = 0) {
     val c = MaterialTheme.colorScheme
     val menu = LocalVideoMenu.current
+    val openChannel = LocalChannelOpener.current
+    val openCollabSheet = LocalCollaboratorsOpener.current
+
+    val collabChannels = video.collabChannels.takeIf { it.size >= 2 } ?: emptyList()
+    val displayChannel = formatCollabNames(collabChannels, defaultName = video.channel)
+    val channelUrl = if (collabChannels.isNotEmpty()) collabChannels.first().url else video.channelUrl
+
+    val onChannelClick: () -> Unit = {
+        if (collabChannels.size >= 2) {
+            openCollabSheet(collabChannels)
+        } else {
+            channelUrl?.let(openChannel)
+        }
+    }
+
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -390,9 +673,19 @@ fun VideoCard(video: VideoItem, onClick: () -> Unit, modifier: Modifier = Modifi
             Thumbnail(
                 video.thumbnail,
                 Modifier.fillMaxWidth().aspectRatio(16f / 9f),
-                radius = 0,
+                radius = radius,
                 videoId = video.id,
             )
+            if (video.mixPlaylistId != null) {
+                Box(
+                    Modifier.align(Alignment.TopStart).padding(8.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color.Black.copy(alpha = 0.72f))
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                ) {
+                    Text("MIX", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 0.7.sp)
+                }
+            }
             DurationPill(video.durationSec, Modifier.align(Alignment.BottomEnd).padding(8.dp))
             ResumeBar(video.id, Modifier.align(Alignment.BottomStart))
         }
@@ -402,28 +695,36 @@ fun VideoCard(video: VideoItem, onClick: () -> Unit, modifier: Modifier = Modifi
                 .padding(start = 12.dp, end = 4.dp, top = 12.dp),
             verticalAlignment = Alignment.Top,
         ) {
-            val openChannel = LocalChannelOpener.current
-            Box(Modifier.pressable(enabled = video.channelUrl != null) { video.channelUrl?.let(openChannel) }) {
-                ChannelAvatar(video.feedAvatar(), video.channel, size = 36)
+            Box(Modifier.pressable(enabled = channelUrl != null || collabChannels.size >= 2, onClick = onChannelClick)) {
+                ChannelAvatar(
+                    url = video.feedAvatar(),
+                    name = displayChannel,
+                    size = 36,
+                    isLive = video.durationSec <= 0L && video.uploaded?.contains("LIVE", ignoreCase = true) == true,
+                    collabChannels = collabChannels,
+                )
             }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(
-                    video.title,
-                    fontWeight = FontWeight.Normal,
+                    text = video.title,
+                    fontWeight = FontWeight.Medium,
                     fontSize = 15.sp,
                     lineHeight = 20.sp,
+                    letterSpacing = (-0.2).sp,
+                    color = c.onSurface,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height(3.dp))
                 Text(
-                    metaLine(video.channel, video.views, video.uploaded),
-                    color = c.onSurfaceVariant,
+                    text = metaLine(displayChannel, video.views, video.uploaded),
+                    color = c.onSurfaceVariant.copy(alpha = 0.85f),
                     fontSize = 12.sp,
                     lineHeight = 16.sp,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.pressable(enabled = channelUrl != null || collabChannels.size >= 2, onClick = onChannelClick),
                 )
             }
             Box(
@@ -439,6 +740,40 @@ fun VideoCard(video: VideoItem, onClick: () -> Unit, modifier: Modifier = Modifi
                     modifier = Modifier.size(20.dp),
                 )
             }
+        }
+    }
+}
+
+/** YouTube radio card: identifies the Mix as a playable queue instead of a single video. */
+@Composable
+fun MixCard(video: VideoItem, onClick: () -> Unit) {
+    val c = MaterialTheme.colorScheme
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .prefetchOnPress(video.id)
+            .pressable(pressedScale = 0.98f, onClick = onClick)
+            .padding(bottom = 16.dp),
+    ) {
+        Box(Modifier.fillMaxWidth()) {
+            Thumbnail(video.thumbnail, Modifier.fillMaxWidth().aspectRatio(16f / 9f), radius = 0, videoId = video.id)
+            Box(
+                Modifier.align(Alignment.BottomEnd).padding(8.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color.Black.copy(alpha = 0.82f))
+                    .padding(horizontal = 10.dp, vertical = 7.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Icon(Icons.AutoMirrored.Rounded.QueueMusic, contentDescription = null, tint = Color.White, modifier = Modifier.size(17.dp))
+                    Text("Mix", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+            ResumeBar(video.id, Modifier.align(Alignment.BottomStart))
+        }
+        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp)) {
+            Text(video.title, color = c.onSurface, fontSize = 16.sp, lineHeight = 21.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.height(4.dp))
+            Text("Mix · ${video.channel}", color = c.onSurfaceVariant, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -493,7 +828,7 @@ fun ResumeBar(videoId: String, modifier: Modifier = Modifier) {
 fun EmptyState(
     icon: ImageVector,
     title: String,
-    body: String,
+    body: String = "",
     modifier: Modifier = Modifier,
     action: (@Composable () -> Unit)? = null,
 ) {
@@ -510,8 +845,10 @@ fun EmptyState(
         }
         Spacer(Modifier.height(18.dp))
         Text(title, fontFamily = RoundedHeavy, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, textAlign = TextAlign.Center)
-        Spacer(Modifier.height(8.dp))
-        Text(body, color = c.onSurfaceVariant, fontSize = 14.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center)
+        if (body.isNotBlank()) {
+            Spacer(Modifier.height(8.dp))
+            Text(body, color = c.onSurfaceVariant, fontSize = 14.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center)
+        }
         if (action != null) {
             Spacer(Modifier.height(20.dp))
             action()

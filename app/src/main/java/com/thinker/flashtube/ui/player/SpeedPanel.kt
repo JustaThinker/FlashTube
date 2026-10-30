@@ -32,7 +32,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -81,7 +84,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
-/** The speed and audio-only buttons: compact pills matching ActionPill. */
+/** Compact playback-speed pill matching ActionPill. */
 private val ModeButtonShape = RoundedCornerShape(18.dp)
 
 /** Speed: the gauge at 1×, the speed itself otherwise; filled in while a speed is remembered. */
@@ -109,29 +112,6 @@ fun SpeedButton(state: PlayerState) {
     ) {
         if (normal) Icon(Icons.Rounded.Speed, "Playback speed", tint = ink, modifier = Modifier.size(18.dp))
         else Text(PlaybackSpeed.label(state.speed) + "×", color = ink, fontSize = 12.5.sp, fontWeight = FontWeight.Black)
-    }
-}
-
-/** Audio only for the whole app; filled while on. */
-@Composable
-fun AudioOnlyButton(state: PlayerState) {
-    val c = MaterialTheme.colorScheme
-    val on = AudioOnly.enabled
-    val bg by animateColorAsState(if (on) c.primary else c.surfaceContainerHigh, tween(220), label = "audioBg")
-    val ink by animateColorAsState(if (on) c.onPrimary else c.onSurface, tween(220), label = "audioInk")
-    Box(
-        Modifier
-            .squishOn(on)
-            .size(width = 44.dp, height = 36.dp)
-            .pressable { state.setAudioOnly(!on) }
-            .background(bg, ModeButtonShape),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            if (on) Icons.Rounded.Headphones else Icons.Outlined.Headphones,
-            if (on) "Audio only is on" else "Audio only",
-            tint = ink, modifier = Modifier.size(18.dp),
-        )
     }
 }
 
@@ -281,6 +261,35 @@ private fun SpeedPanelContent(state: PlayerState) {
             // The needle, ringed in the panel's color so ticks pass behind it cleanly.
             drawRoundRect(ring, Offset(cx - 5.dp.toPx(), 0f), Size(10.dp.toPx(), 42.dp.toPx()), CornerRadius(5.dp.toPx()))
             drawRoundRect(needle, Offset(cx - 2.dp.toPx(), 3.dp.toPx()), Size(4.dp.toPx(), 36.dp.toPx()), CornerRadius(2.dp.toPx()))
+        }
+
+        // Quick Speed Preset Chips
+        LazyRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 10.dp),
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            items(listOf(0.25f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f, 2.5f, 3.0f)) { speed ->
+                val active = PlaybackSpeed.isNormal(state.speed - speed + 1f)
+                Box(
+                    modifier = Modifier
+                        .height(32.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (active) c.primary else c.surfaceContainerHighest)
+                        .pressable { glideTo(speed) }
+                        .padding(horizontal = 12.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "${speed}x",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (active) c.onPrimary else c.onSurface,
+                    )
+                }
+            }
         }
 
         Row(Modifier.fillMaxWidth().padding(start = 18.dp, end = 14.dp), verticalAlignment = Alignment.CenterVertically) {

@@ -72,6 +72,28 @@ class InnerTubeParseTest {
         )
     }
 
+    @Test fun homeRowsKeepServerChipsMixesAndPostsIndependent() {
+        val response = JSONObject(
+            """{
+              "contents":{"feed":{
+                "chipCloudChipRenderer":{"text":{"simpleText":"Music"},
+                  "navigationEndpoint":{"browseEndpoint":{"browseId":"FEmusic","params":"music_params"}}},
+                "radioRenderer":{"title":{"simpleText":"Daily Mix"},
+                  "playlistId":"RDmix123","navigationEndpoint":{"watchEndpoint":{"videoId":"abcdefghijk"}}},
+                "backstagePostRenderer":{"postId":"post-123","authorText":{"simpleText":"Artist"},
+                  "contentText":{"runs":[{"text":"New album out now"}]}
+                }
+              }}
+            }""",
+        )
+        val page = InnerTube.parseFeed(response)
+        assertTrue(page.chips.any { it.title == "Music" && it.browseId == "FEmusic" && it.params == "music_params" })
+        assertTrue(page.videos.any { it.mixPlaylistId == "RDmix123" && it.feedKey == "mix:RDmix123" })
+        val post = page.videos.single { it.feedPost != null }
+        assertEquals("New album out now", post.feedPost?.text)
+        assertEquals("post:post-123", post.feedKey)
+    }
+
     @Test fun watchNextRelated() {
         val page = InnerTube.parseFeed(fixture("next"))
         assertTrue("got ${page.videos.size}", page.videos.size >= 10)

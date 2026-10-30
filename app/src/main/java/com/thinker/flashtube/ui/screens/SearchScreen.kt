@@ -388,6 +388,9 @@ fun SearchScreen(
                                 scrollToTop = scrollToTop,
                                 indicatorTop = top,
                                 videos = state.results,
+                                onLoadMore = state::loadMore,
+                                isLoadingMore = state.loadingMore,
+                                hasMore = state.hasMore,
                             )
                         }
                     }

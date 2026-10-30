@@ -108,16 +108,43 @@ private val DefaultDark = darkColorScheme(
     outlineVariant = Color(0xFF303030),
 )
 
+private val DefaultAmoled = darkColorScheme(
+    primary = Color.White,
+    onPrimary = Color.Black,
+    primaryContainer = Color(0xFF1E1E1E),
+    onPrimaryContainer = Color.White,
+    secondary = Color(0xFFAAAAAA),
+    onSecondary = Color.Black,
+    secondaryContainer = Color(0xFF222222),
+    onSecondaryContainer = Color(0xFFF1F1F1),
+    tertiary = Color.White,
+    tertiaryContainer = Color(0xFF1A1A1A),
+    onTertiaryContainer = Color(0xFFF1F1F1),
+    background = Color.Black,
+    onBackground = Color.White,
+    surface = Color.Black,
+    onSurface = Color.White,
+    surfaceVariant = Color(0xFF141414),
+    onSurfaceVariant = Color(0xFFAAAAAA),
+    surfaceContainerLowest = Color.Black,
+    surfaceContainerLow = Color(0xFF080808),
+    surfaceContainer = Color(0xFF101010),
+    surfaceContainerHigh = Color(0xFF1A1A1A),
+    surfaceContainerHighest = Color(0xFF242424),
+    outline = Color(0xFF606060),
+    outlineVariant = Color(0xFF202020),
+)
+
 // ── Theme settings ─────────────────────────────────────────────────────────────
 
 /**
  * The selected theme mode, persisted across restarts.
- * Supported modes: "system" (default), "light", "dark".
+ * Supported modes: "system" (default), "light", "dark", "amoled".
  */
 object ThemeSettings {
     private var prefs: SharedPreferences? = null
 
-    /** "system", "light", or "dark". */
+    /** "system", "light", "dark", or "amoled". */
     var mode by mutableStateOf("system")
         private set
 
@@ -138,7 +165,7 @@ object ThemeSettings {
 
 @Composable
 fun isDarkTheme(): Boolean = when (ThemeSettings.mode) {
-    "dark" -> true
+    "dark", "amoled" -> true
     "light" -> false
     else -> isSystemInDarkTheme()
 }
@@ -147,7 +174,12 @@ fun isDarkTheme(): Boolean = when (ThemeSettings.mode) {
 @Composable
 fun FlashTubeTheme(content: @Composable () -> Unit) {
     val dark = isDarkTheme()
-    val scheme = if (dark) DefaultDark else DefaultLight
+    val scheme = when (ThemeSettings.mode) {
+        "light" -> DefaultLight
+        "dark" -> DefaultDark
+        "amoled" -> DefaultAmoled
+        else -> if (isSystemInDarkTheme()) DefaultDark else DefaultLight
+    }
     SystemBars(dark, scheme.surface)
     MaterialTheme(colorScheme = scheme, shapes = ExpressiveShapes, typography = Typography()) {
         CompositionLocalProvider(

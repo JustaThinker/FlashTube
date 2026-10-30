@@ -1,6 +1,7 @@
 package com.thinker.flashtube
 
 import android.util.Log
+import com.thinker.flashtube.data.ContentRegion
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
@@ -164,8 +165,8 @@ object PlayerFallback {
             .put("deviceModel", cfg.deviceModel)
             .put("osName", cfg.osName)
             .put("osVersion", cfg.osVersion)
-            .put("hl", original?.optString("hl")?.ifEmpty { null } ?: java.util.Locale.getDefault().language.takeIf { it.isNotBlank() } ?: "en")
-            .put("gl", original?.optString("gl")?.ifEmpty { null } ?: java.util.Locale.getDefault().country.takeIf { it.isNotBlank() && it.length == 2 }?.uppercase() ?: "US")
+            .put("hl", original?.optString("hl")?.ifEmpty { null } ?: ContentRegion.currentLanguageCode)
+            .put("gl", original?.optString("gl")?.ifEmpty { null } ?: ContentRegion.currentRegionCode)
 
         val body = JSONObject()
             .put("context", JSONObject().put("client", client))

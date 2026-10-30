@@ -113,13 +113,6 @@ class PlaybackService : MediaSessionService() {
         player.setVideoFrameMetadataListener { _, releaseTimeNs, _, _ -> AvSync.onFrameReleased(releaseTimeNs) }
         player.addListener(SponsorSkipper(player))
         player.addListener(SpeedKeeper(player))
-        // Audio only is app-wide and kept; the UI applies it on connect, this covers a start
-        // without one (e.g. resuming from the media notification).
-        if (AudioOnly.enabled) {
-            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
-                .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, true)
-                .build()
-        }
         // Before the session's own listener: the UI must see the recovery when the error reaches it.
         player.addListener(StreamRecoverer(player, sources, resolver))
         resumeSaver = ResumeSaver(player).also(player::addListener)
@@ -133,9 +126,10 @@ class PlaybackService : MediaSessionService() {
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        // Swiping the app away from Recents pauses and ends the session, playing or not
-        // (Derek, 2026-10-10; it used to keep playing). onDestroy saves the resume point.
-        pauseAllPlayersAndStopSelf()
+        val playing = session?.player?.playWhenReady == true
+        if (!com.thinker.flashtube.BackgroundPlayback.keepOnTaskRemoved || !com.thinker.flashtube.BackgroundPlayback.enabled || !playing) {
+            pauseAllPlayersAndStopSelf()
+        }
     }
 
     private var resumeSaver: ResumeSaver? = null
@@ -165,13 +159,17 @@ class PlaybackService : MediaSessionService() {
             mediaItems: MutableList<MediaItem>,
         ): ListenableFuture<MutableList<MediaItem>> = resolver.submit<MutableList<MediaItem>> {
             mediaItems.map { item ->
-                val info = StreamCache.getOrLoad(item.mediaId)
+                val ladder = runCatching {
+                    kotlinx.coroutines.runBlocking {
+                        com.thinker.flashtube.data.VideoStreamResolver.resolve(item.mediaId)
+                    }
+                }.getOrNull()
+                val title = item.mediaMetadata.title ?: ladder?.title
                 item.buildUpon()
                     .setUri(YouTube.watchUrl(item.mediaId))
                     .setMediaMetadata(
                         item.mediaMetadata.buildUpon()
-                            .setTitle(item.mediaMetadata.title ?: info.name)
-                            .setArtist(item.mediaMetadata.artist ?: info.uploaderName)
+                            .setTitle(title)
                             .setMediaType(MediaMetadata.MEDIA_TYPE_VIDEO)
                             .build(),
                     )
@@ -224,6 +222,7 @@ private class StreamRecoverer(
         StreamRecovery.failed = null
         StreamRecovery.recovering = id
         StreamCache.invalidate(id)
+        com.thinker.flashtube.data.VideoStreamResolutionCache.invalidate(id)
         resolver.execute {
             val result = runCatching { StreamCache.getOrLoad(id) }
             main.post {
@@ -390,7 +389,7 @@ private class SpeedKeeper(private val player: ExoPlayer) : Player.Listener {
 
 /**
  * Schedules SponsorBlock auto-skips for each video as it becomes current. Runs in the
- * service, so skips happen in background and audio-only playback too.
+ * service, so skips happen in background playback too.
  *
  * Each auto-skip segment gets a PlayerMessage at its start (delivered once, so seeking
  * back into a segment plays it — the user's choice wins). On delivery the audio fades out
@@ -453,10 +452,10 @@ private class SponsorSkipper(private val player: ExoPlayer) : Player.Listener {
  * whole stream in one go gets throttled to a crawl.
  */
 @OptIn(UnstableApi::class)
-private class YouTubeMediaSourceFactory(context: Context) : MediaSource.Factory {
+private class YouTubeMediaSourceFactory(private val context: Context) : MediaSource.Factory {
     private val dataSourceFactory: DataSource.Factory = DefaultDataSource.Factory(
         context,
-        OkHttpDataSource.Factory(Net.client).setUserAgent(Net.USER_AGENT),
+        Net.streamDataSourceFactory
     )
     private val fallback = DefaultMediaSourceFactory(dataSourceFactory)
 
@@ -475,6 +474,43 @@ private class YouTubeMediaSourceFactory(context: Context) : MediaSource.Factory 
             val localMediaItem = mediaItem.buildUpon().setUri(localUri).build()
             Log.i("FlashTube", "media source ${mediaItem.mediaId}: playing local downloaded file ${task.file.name}")
             return ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(localMediaItem)
+        }
+
+        // Fast VISIONOS stream ladder resolution (~150ms)
+        val ladder = runCatching {
+            kotlinx.coroutines.runBlocking {
+                com.thinker.flashtube.data.VideoStreamResolver.resolve(mediaItem.mediaId)
+            }
+        }.getOrNull()
+
+        if (ladder != null) {
+            val targetHeight = QualityPreference.getEffectiveTargetHeight(context)
+            val isMetered = QualityPreference.isNetworkMetered(context)
+            val preferHdr = QualityPreference.preferHdr
+            val picked = com.thinker.flashtube.data.VideoStreamResolver.pickBestStreams(
+                ladder = ladder,
+                targetQualityHeight = targetHeight,
+                isMetered = isMetered,
+                preferHdr = preferHdr
+            )
+            if (picked.isLive && !picked.hlsUrl.isNullOrEmpty()) {
+                val liveItem = mediaItem.buildUpon().setUri(Uri.parse(picked.hlsUrl)).build()
+                Log.i("FlashTube", "media source ${mediaItem.mediaId}: playing live stream HLS URL ${picked.hlsUrl}")
+                return HlsMediaSource.Factory(dataSourceFactory).createMediaSource(liveItem)
+            }
+
+            if (picked.video != null && picked.audio != null) {
+                Log.i("FlashTube", "media source ${mediaItem.mediaId}: playing VISIONOS video (${picked.video.height}p) + audio (${picked.audio.bitrate} bps)")
+                val videoSource = ProgressiveMediaSource.Factory(dataSourceFactory)
+                    .createMediaSource(mediaItem.buildUpon().setUri(Uri.parse(picked.video.url)).build())
+                val audioSource = ProgressiveMediaSource.Factory(dataSourceFactory)
+                    .createMediaSource(mediaItem.buildUpon().setUri(Uri.parse(picked.audio.url)).build())
+                return MergingMediaSource(true, true, videoSource, audioSource)
+            } else if (picked.video != null) {
+                Log.i("FlashTube", "media source ${mediaItem.mediaId}: playing VISIONOS video (${picked.video.height}p)")
+                return ProgressiveMediaSource.Factory(dataSourceFactory)
+                    .createMediaSource(mediaItem.buildUpon().setUri(Uri.parse(picked.video.url)).build())
+            }
         }
 
         val info = StreamCache.get(mediaItem.mediaId) ?: return fallback.createMediaSource(mediaItem)

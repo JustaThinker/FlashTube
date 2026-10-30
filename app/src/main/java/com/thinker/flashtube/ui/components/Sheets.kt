@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
@@ -81,7 +82,14 @@ import androidx.compose.ui.unit.sp
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun VideoOptionsSheet(video: VideoItem, player: PlayerState, onDismiss: () -> Unit) {
+fun VideoOptionsSheet(
+    video: VideoItem,
+    player: PlayerState,
+    onDismiss: () -> Unit,
+    onInterested: () -> Unit = {},
+    onNotInterested: () -> Unit = {},
+    onDownload: () -> Unit = {},
+) {
     val c = MaterialTheme.colorScheme
     val context = LocalContext.current
     ModalBottomSheet(
@@ -102,6 +110,9 @@ fun VideoOptionsSheet(video: VideoItem, player: PlayerState, onDismiss: () -> Un
         if (Account.signedIn) {
             OptionRow(Icons.Rounded.WatchLater, "Save to Watch later") { player.saveToWatchLater(video); onDismiss() }
         }
+        OptionRow(Icons.Rounded.Check, "Interested") { onInterested(); onDismiss() }
+        OptionRow(Icons.Rounded.Close, "Not interested") { onNotInterested(); onDismiss() }
+        OptionRow(Icons.Rounded.Download, "Download") { onDownload(); onDismiss() }
         OptionRow(Icons.Rounded.Share, "Share") {
             val send = Intent(Intent.ACTION_SEND).setType("text/plain")
                 .putExtra(Intent.EXTRA_TEXT, "https://youtu.be/${video.id}")
@@ -167,6 +178,33 @@ fun QueueCard(player: PlayerState, onOpen: () -> Unit) {
             Text(next.title, color = c.onSecondaryContainer, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Icon(Icons.AutoMirrored.Rounded.QueueMusic, null, tint = c.onSecondaryContainer)
+    }
+}
+
+/** Compact floating upcoming-mix control; ordinary video queues never surface this pill. */
+@Composable
+fun QueuePill(player: PlayerState, onOpen: () -> Unit, modifier: Modifier = Modifier) {
+    if (!player.mixQueueActive) return
+    val next = player.queue.firstOrNull() ?: return
+    val c = MaterialTheme.colorScheme
+    Row(
+        modifier
+            .widthIn(min = 176.dp, max = 292.dp)
+            .height(48.dp)
+            .shadow(8.dp, CircleShape)
+            .clip(CircleShape)
+            .background(c.inverseSurface)
+            .pressable(pressedScale = 0.97f, onClick = onOpen)
+            .padding(horizontal = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(9.dp),
+    ) {
+        Icon(Icons.AutoMirrored.Rounded.QueueMusic, null, tint = c.inverseOnSurface, modifier = Modifier.size(18.dp))
+        Column(Modifier.weight(1f)) {
+            Text("Mix · ${player.queue.size} up next", color = c.inverseOnSurface.copy(alpha = 0.72f), fontSize = 10.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            Text(next.title, color = c.inverseOnSurface, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Icon(Icons.Rounded.PlayArrow, null, tint = c.inverseOnSurface, modifier = Modifier.size(18.dp))
     }
 }
 
@@ -660,6 +698,84 @@ fun SubtitlesSheet(
                                 Icon(Icons.Rounded.Check, contentDescription = "Selected", tint = c.primary, modifier = Modifier.size(18.dp))
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Collaborators sheet showing channels when a video has multiple collaborators. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CollaboratorsSheet(
+    collabChannels: List<ChannelRef>,
+    onDismiss: () -> Unit,
+    onOpenChannel: (String) -> Unit,
+) {
+    val c = MaterialTheme.colorScheme
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = c.surfaceContainer,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Collaborators",
+                    fontFamily = RoundedHeavy,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                    color = c.onSurface,
+                    modifier = Modifier.weight(1f),
+                )
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(c.surfaceContainerHigh)
+                        .pressable { onDismiss() },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Rounded.Close, "Close", tint = c.onSurfaceVariant, modifier = Modifier.size(18.dp))
+                }
+            }
+
+            HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f))
+            Spacer(Modifier.height(12.dp))
+
+            collabChannels.forEach { channel ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .pressable {
+                            channel.url?.let(onOpenChannel)
+                        }
+                        .padding(vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    ChannelAvatar(channel.avatar, channel.name, size = 44)
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            text = channel.name,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            color = c.onSurface,
+                        )
                     }
                 }
             }

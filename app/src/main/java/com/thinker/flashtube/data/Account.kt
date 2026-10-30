@@ -1,12 +1,15 @@
 package com.thinker.flashtube
 
 import android.content.Context
+import com.thinker.flashtube.data.ContentRegion
 import android.content.SharedPreferences
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
@@ -21,7 +24,9 @@ import kotlin.random.Random
 data class Profile(val name: String, val handle: String?, val avatar: String?)
 
 @Immutable
-data class PlaylistRef(val id: String, val title: String, val thumbnail: String?, val subtitle: String?)
+data class PlaylistRef(val id: String, val title: String, val thumbnail: String?, val subtitle: String?, val count: Int = 0) {
+    val isMix get() = id.startsWith("RD") || id.startsWith("FEplaylist_") || title.contains("Mix", ignoreCase = true)
+}
 
 @Immutable
 data class ChannelRef(
@@ -29,16 +34,63 @@ data class ChannelRef(
     val name: String,
     val avatar: String?,
     val isLive: Boolean = false,
+    val handle: String? = null,
+    val subscriberCountText: String? = null,
+    val verified: Boolean = false,
 ) {
     val url: String get() = "https://www.youtube.com/channel/$id"
 }
 
-/** One page of a feed plus the token for the next page, if any. */
+/** A Home filter supplied by YouTube itself, including the browse route used when selected. */
 @Immutable
-data class FeedPage(val videos: List<VideoItem>, val next: String?, val channelHeader: ChannelHeaderMeta? = null)
+data class FeedChip(
+    val title: String,
+    val browseId: String?,
+    val params: String?,
+    val navigationEndpoint: JSONObject? = null,
+    val key: String = listOfNotNull(browseId, params, title).joinToString("|")
+)
+
+@Immutable
+data class ChannelShelf(
+    val title: String,
+    val videos: List<VideoItem>,
+    val isShorts: Boolean = false,
+)
+
+/** One page of a feed plus its server-provided filters and the token for the next page. */
+@Immutable
+data class FeedPage(
+    val videos: List<VideoItem>,
+    val next: String?,
+    val channelHeader: ChannelHeaderMeta? = null,
+    val chips: List<FeedChip> = emptyList(),
+)
 
 @Immutable
 data class ChannelHeaderMeta(val handle: String?, val subscribers: Long, val videoCount: Long, val verified: Boolean = false)
+
+@Immutable
+data class PollOption(val text: String, val votePercentage: String?, val imageUrl: String? = null)
+
+@Immutable
+data class CommunityPost(
+    val id: String,
+    val author: String,
+    val authorAvatar: String?,
+    val publishedTime: String?,
+    val text: String,
+    val images: List<String> = emptyList(),
+    val pollOptions: List<PollOption> = emptyList(),
+    val voteCount: String? = null,
+    val likeCount: Int = -1,
+    val dislikeCount: Int = -1,
+    val liked: Boolean = false,
+    val channelId: String? = null,
+    val detailParams: String? = null,
+    val commentCountText: String? = null,
+    val imageAspectRatio: Float? = null,
+)
 
 enum class LikeStatus { Like, Dislike, None }
 
@@ -73,6 +125,8 @@ object Account {
     val signedIn get() = profile != null
 
     private var activeAccountId: String? = null
+    /** Stable key for account-scoped server data caches; never contains the auth cookies. */
+    val feedIdentity: String get() = activeAccountId ?: "anonymous"
     private var store: SecureStore? = null
     private val cookies = linkedMapOf<String, String>()
     private var clientVersion = FALLBACK_CLIENT_VERSION
@@ -265,6 +319,7 @@ object Account {
 
     internal fun clientVersion() = clientVersion
     internal fun visitorData() = visitorData
+    internal fun clearVisitorData() { visitorData = null }
 
     internal fun cookieHeader(): String = synchronized(cookies) { cookies.entries.joinToString("; ") { "${it.key}=${it.value}" } }
 
@@ -323,50 +378,6 @@ object Account {
     private const val KEY_ACTIVE_ID = "active_account_id"
 }
 
-object RegionSettings {
-    private const val KEY_REGION = "content_region"
-    private var prefs: SharedPreferences? = null
-
-    val REGIONS = listOf(
-        "IN" to "India",
-        "US" to "United States",
-        "GB" to "United Kingdom",
-        "CA" to "Canada",
-        "AU" to "Australia",
-        "DE" to "Germany",
-        "FR" to "France",
-        "BR" to "Brazil",
-        "PH" to "Philippines",
-        "ID" to "Indonesia",
-        "JP" to "Japan",
-        "KR" to "South Korea",
-        "MX" to "Mexico",
-        "ES" to "Spain",
-        "IT" to "Italy",
-        "RU" to "Russia",
-        "ZA" to "South Africa",
-    )
-
-    @Volatile
-    var code: String = java.util.Locale.getDefault().country.takeIf { it.isNotBlank() && it.length == 2 }?.uppercase() ?: "US"
-        private set
-
-    fun init(context: Context) {
-        prefs = context.getSharedPreferences("region_settings", Context.MODE_PRIVATE)
-        val defaultCountry = java.util.Locale.getDefault().country.takeIf { it.isNotBlank() && it.length == 2 }?.uppercase() ?: "US"
-        code = prefs?.getString(KEY_REGION, defaultCountry) ?: defaultCountry
-    }
-
-    fun set(newCode: String) {
-        code = newCode.uppercase()
-        prefs?.edit()?.putString(KEY_REGION, code)?.apply()
-    }
-
-    fun labelFor(regionCode: String): String {
-        return REGIONS.find { it.first.equals(regionCode, ignoreCase = true) }?.second ?: regionCode
-    }
-}
-
 /**
  * YouTube's internal web API ("InnerTube"), signed in. Reads: home, subscriptions,
  * channels, history, playlists. Writes: like/dislike, subscribe, Watch later, watch history
@@ -376,10 +387,26 @@ object InnerTube {
     private const val BASE = "https://www.youtube.com/youtubei/v1/"
     private val JSON_TYPE = "application/json".toMediaType()
 
-    private fun regionCode(): String = RegionSettings.code
+    private fun regionCode(): String = ContentRegion.currentRegionCode
 
-    private fun languageCode(): String =
-        java.util.Locale.getDefault().language.takeIf { it.isNotBlank() }?.lowercase() ?: "en"
+    private fun languageCode(): String = ContentRegion.currentLanguageCode
+
+    private fun cookieHeaderWithRegion(baseCookies: String?): String {
+        val gl = regionCode()
+        val hl = languageCode()
+        val prefKeyValue = "f6=40000000&tz=UTC&gl=$gl&hl=$hl"
+        if (baseCookies.isNullOrBlank()) return "PREF=$prefKeyValue"
+        if (!baseCookies.contains("PREF=")) return "$baseCookies; PREF=$prefKeyValue"
+
+        return baseCookies.split("; ").joinToString("; ") { part ->
+            if (part.startsWith("PREF=")) {
+                var prefVal = part.substringAfter("PREF=")
+                if (!prefVal.contains("gl=")) prefVal += "&gl=$gl" else prefVal = prefVal.replace(Regex("gl=[^&]+"), "gl=$gl")
+                if (!prefVal.contains("hl=")) prefVal += "&hl=$hl" else prefVal = prefVal.replace(Regex("hl=[^&]+"), "hl=$hl")
+                "PREF=$prefVal"
+            } else part
+        }
+    }
 
     /** Signed in when there's a session, otherwise anonymous (public pages like channels). */
     internal fun postAny(endpoint: String, body: JSONObject): JSONObject =
@@ -392,18 +419,27 @@ object InnerTube {
             .put("clientVersion", Account.clientVersion())
             .put("hl", languageCode())
             .put("gl", regionCode())
+            .put("utcOffsetMinutes", 0)
+
+        val userObj = JSONObject()
+            .put("lockedSafetyMode", false)
 
         if (anonymous) {
             Account.visitorData()?.let { clientObj.put("visitorData", it) }
         }
 
-        body.put("context", JSONObject().put("client", clientObj))
+        body.put("context", JSONObject().put("client", clientObj).put("user", userObj))
+
+        val baseCookies = if (auth != null) Account.cookieHeader() else null
+        val cookieHeaderVal = cookieHeaderWithRegion(baseCookies)
 
         val request = Request.Builder()
-            .url("$BASE$endpoint?prettyPrint=false")
+            .url("$BASE$endpoint?prettyPrint=false&gl=${regionCode()}&hl=${languageCode()}")
             .post(body.toString().toRequestBody(JSON_TYPE))
             .header("User-Agent", Net.USER_AGENT)
-            .apply { if (auth != null) { header("Cookie", Account.cookieHeader()); header("Authorization", auth) } }
+            .header("Accept-Language", "${languageCode()}-${regionCode()},${languageCode()};q=0.9")
+            .header("Cookie", cookieHeaderVal)
+            .apply { if (auth != null) header("Authorization", auth) }
             .header("Origin", Account.ORIGIN)
             .header("X-Origin", Account.ORIGIN)
             .header("Referer", Account.ORIGIN + "/")
@@ -449,30 +485,134 @@ object InnerTube {
      * When signed out, loads YouTube's trending/popular kiosk feed so recommendations
      * appear immediately without requiring any Google login.
      */
-    suspend fun homeFeed(next: String? = null): FeedPage = withContext(Dispatchers.IO) {
-        if (Account.signedIn) {
-            val body = if (next != null) JSONObject().put("continuation", next)
-                       else JSONObject().put("browseId", "FEwhat_to_watch")
-            parseFeed(post("browse", body))
+    suspend fun homeFeed(next: String? = null, chip: FeedChip? = null): FeedPage = withContext(Dispatchers.IO) {
+        if (BuildConfig.DEBUG && next == null && chip == null) {
+            android.util.Log.d("HomeChipSync", "Requesting Home feed; signedIn=${Account.signedIn}")
+        }
+        if (Account.signedIn || chip != null) {
+            val body = if (next != null) JSONObject().put("continuation", next) else {
+                chip?.navigationEndpoint?.let { JSONObject().put("navigationEndpoint", it) }
+                    ?: JSONObject().put("browseId", chip?.browseId ?: "FEwhat_to_watch").apply {
+                        chip?.params?.takeIf { it.isNotBlank() }?.let { put("params", it) }
+                    }
+            }
+            parseFeed(postAny("browse", body))
         } else {
+            val serverFeed = runCatching {
+                // Anonymous sessions still receive YouTube's own home feed and its category
+                // chip bar; using the signed-in request here silently fell through to fallback.
+                parseFeed(postAny("browse", JSONObject().put("browseId", "FEwhat_to_watch")))
+            }.getOrNull()
+            if (serverFeed != null && serverFeed.videos.isNotEmpty()) return@withContext serverFeed
+
+            val seeds = SeenStore.load().toList().takeLast(6)
+            if (seeds.isNotEmpty()) {
+                val tasteVideos = getTasteBasedVideos(seeds)
+                if (tasteVideos.isNotEmpty()) {
+                    return@withContext FeedPage(tasteVideos, null)
+                }
+            }
             YouTube.trending()
         }
     }
 
-    suspend fun channelVideos(channelId: String, continuation: String? = null): FeedPage = withContext(Dispatchers.IO) {
+    /**
+     * Interleaves related videos for recently watched seeds to build a personalized
+     * recommendation feed for signed-out users (Koda recommendation model).
+     */
+    suspend fun getTasteBasedVideos(seedIds: List<String>): List<VideoItem> = kotlinx.coroutines.coroutineScope {
+        if (seedIds.isEmpty()) return@coroutineScope emptyList()
+        val seeds = seedIds.take(6)
+        val perSeed = seeds.map { seedId ->
+            async(Dispatchers.IO) {
+                runCatching {
+                    parseFeed(postAny("next", JSONObject().put("videoId", seedId))).videos
+                }.getOrDefault(emptyList())
+            }
+        }.awaitAll()
+
+        val mixed = mutableListOf<VideoItem>()
+        val seen = HashSet<String>(seedIds)
+        val longest = perSeed.maxOfOrNull { it.size } ?: 0
+        for (i in 0 until longest) {
+            for (list in perSeed) {
+                val video = list.getOrNull(i) ?: continue
+                if (video.id in seen) continue
+                seen.add(video.id)
+                mixed.add(video)
+            }
+        }
+        mixed
+    }
+
+    /**
+     * Sends dismissal feedback to YouTube ("Not Interested" / "Don't recommend channel")
+     * asynchronously when signed in.
+     */
+    suspend fun sendDismissalFeedback(token: String?): Boolean = withContext(Dispatchers.IO) {
+        if (token.isNullOrBlank() || !Account.signedIn) return@withContext false
+        try {
+            val body = JSONObject()
+                .put("feedbackTokens", JSONArray().put(token))
+                .put("isFeedbackTokenUnencrypted", false)
+                .put("shouldMerge", false)
+            val raw = post("feedback", body)
+            val processed = raw.optJSONArray("feedbackResponses")
+                ?.optJSONObject(0)
+                ?.optBoolean("isProcessed", false) ?: false
+            processed
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    suspend fun channelVideos(channelId: String, params: String? = CHANNEL_VIDEOS_TAB, continuation: String? = null): FeedPage = withContext(Dispatchers.IO) {
         val body = if (continuation != null) JSONObject().put("continuation", continuation)
-        else JSONObject().put("browseId", channelId).put("params", CHANNEL_VIDEOS_TAB)
+        else JSONObject().put("browseId", channelId).put("params", params ?: CHANNEL_VIDEOS_TAB)
         val root = postAny("browse", body)
         val page = parseFeed(root)
         val header = if (continuation == null) parseChannelHeader(root) else null
         FeedPage(page.videos, page.next, header)
     }
 
+    suspend fun setCommunityPostLike(postId: String, liked: Boolean): Boolean = withContext(Dispatchers.IO) {
+        if (!Account.signedIn) throw NotSignedInException()
+        val endpoint = if (liked) "like/like" else "like/removelike"
+        val body = JSONObject().put("target", JSONObject().put("postId", postId))
+        val res = runCatching { postAny(endpoint, body) }.getOrNull()
+        res != null
+    }
+
     /** The channel page's Videos tab selector (as on youtube.com, 2026-10-06). */
-    private const val CHANNEL_VIDEOS_TAB = "EgZ2aWRlb3PyBgQKAjoA"
+    const val CHANNEL_VIDEOS_TAB = "EgZ2aWRlb3PyBgQKAjoA"
+    const val CHANNEL_SHORTS_TAB = "EgZzaG9ydHPyBgQKAjoA"
+    const val CHANNEL_LIVE_TAB = "EgBsaXZlcPIGBAoCEgA%3D"
+    const val CHANNEL_PLAYLISTS_TAB = "EglwbGF5bGlzdHPyBgQKAjoA"
+    const val CHANNEL_COMMUNITY_TAB = "EgZjb21tdW5pdHkyBgQKACgB"
+
     suspend fun subscriptionsFeed(next: String? = null) = browse("FEsubscriptions", next)
     suspend fun history(next: String? = null) = browse("FEhistory", next)
-    suspend fun playlist(id: String, next: String? = null) = browse("VL$id", next)
+
+    suspend fun playlist(id: String, next: String? = null): FeedPage = withContext(Dispatchers.IO) {
+        // YouTube serves radio mixes inconsistently: some responses accept RD… directly,
+        // while others require the playlist browse prefix used by ordinary playlists.
+        if (id.startsWith("RD") && next == null) {
+            val prefixed = runCatching { browse("VL$id") }.getOrNull()
+            if (!prefixed?.videos.isNullOrEmpty()) return@withContext prefixed!!
+            return@withContext browse(id)
+        }
+        val browseId = when {
+            id.startsWith("VL") || id.startsWith("FE") || id.startsWith("DL") || id.startsWith("RD") -> id
+            else -> "VL$id"
+        }
+        browse(browseId, next)
+    }
+
+    suspend fun channelCommunityPosts(channelId: String): List<CommunityPost> = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("browseId", channelId).put("params", CHANNEL_COMMUNITY_TAB)
+        val root = postAny("browse", body)
+        parseCommunityPosts(root)
+    }
 
     /** Header avatar from a channel browse (playlist rows often ship no channel thumbnail). */
     suspend fun channelAvatarUrl(channelId: String): String? = withContext(Dispatchers.IO) {
@@ -661,6 +801,50 @@ object InnerTube {
 
     private const val CPN_ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
 
+    suspend fun channelShelves(channelId: String): List<ChannelShelf> = withContext(Dispatchers.IO) {
+        val root = runCatching { postAny("browse", JSONObject().put("browseId", channelId)) }.getOrNull()
+        root?.let { parseChannelShelves(it) }.orEmpty()
+    }
+
+    internal fun parseChannelShelves(root: JSONObject): List<ChannelShelf> {
+        val shelves = mutableListOf<ChannelShelf>()
+
+        root.walk { key, obj ->
+            if (key == "shelfRenderer" || key == "reelShelfRenderer" || key == "itemSectionRenderer") {
+                val title = obj.optJSONObject("title")?.optString("simpleText")
+                    ?: obj.optJSONObject("title")?.optJSONArray("runs")?.optJSONObject(0)?.optString("text")
+                    ?: obj.text("title")
+                    ?: ""
+
+                val videos = mutableListOf<VideoItem>()
+                val isShorts = key == "reelShelfRenderer" || title.contains("Shorts", ignoreCase = true)
+
+                obj.walk { childKey, childObj ->
+                    when (childKey) {
+                        "videoRenderer", "compactVideoRenderer", "gridVideoRenderer" -> {
+                            if (!isMembersOnly(childObj) && !isMovie(childObj)) {
+                                parseVideoRenderer(childObj)?.let { videos.add(it) }
+                            }
+                        }
+                        "lockupViewModel" -> {
+                            if (!isMembersOnly(childObj) && !isMovie(childObj)) {
+                                if (childObj.optString("contentType") == "LOCKUP_CONTENT_TYPE_VIDEO") {
+                                    parseLockup(childObj)?.let { videos.add(it) }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (title.isNotBlank() && videos.isNotEmpty()) {
+                    shelves.add(ChannelShelf(title = title, videos = videos.distinctBy { it.id }, isShorts = isShorts))
+                }
+            }
+        }
+
+        return shelves.distinctBy { it.title }
+    }
+
     // ── Parsing ────────────────────────────────────────────────────────────────
 
     /**
@@ -668,22 +852,87 @@ object InnerTube {
      * the classic videoRenderer family or the newer lockupViewModel. Shorts are skipped.
      */
     internal fun parseFeed(root: JSONObject): FeedPage {
+        if (BuildConfig.DEBUG) {
+            val chipNodes = linkedMapOf<String, Int>()
+            root.walk { key, _ -> if (key.contains("chip", ignoreCase = true)) chipNodes[key] = (chipNodes[key] ?: 0) + 1 }
+            android.util.Log.d("HomeChipSync", "Chip-shaped response nodes: $chipNodes")
+        }
         val videos = LinkedHashMap<String, VideoItem>()
         var next: String? = null
+        val chips = LinkedHashMap<String, FeedChip>()
+        val mixPlaylistIds = HashSet<String>()
         root.walk { key, obj ->
             when (key) {
+                "chipCloudChipRenderer" -> {
+                    val title = (obj.text("text")
+                        ?: obj.optJSONObject("accessibilityData")?.optJSONObject("accessibilityData")?.optString("label"))
+                        ?.substringBefore(". Selected")?.trim().orEmpty()
+                    var browseId: String? = null
+                    var params: String? = null
+                    val navigationEndpoint = obj.optJSONObject("navigationEndpoint")
+                    navigationEndpoint?.walk { endpointKey, endpoint ->
+                        if (endpointKey == "browseEndpoint") {
+                            if (browseId == null) browseId = endpoint.optString("browseId").takeIf { it.isNotBlank() }
+                            if (params == null) params = endpoint.optString("params").takeIf { it.isNotBlank() }
+                        }
+                    }
+                    if (BuildConfig.DEBUG) {
+                        val endpoint = obj.optJSONObject("navigationEndpoint")
+                        android.util.Log.d("HomeChipSync", "chip '$title' route=${endpoint?.toString()?.take(240)}")
+                    }
+                    // The selected default "All" chip can omit its navigation endpoint.
+                    if (title.isNotBlank() && (navigationEndpoint != null || browseId != null || params != null || title.equals("All", true))) {
+                        if (title.equals("All", true) && browseId == null && params == null) browseId = "FEwhat_to_watch"
+                        val routeKey = navigationEndpoint?.toString() ?: listOfNotNull(browseId, params, title).joinToString("|")
+                        val chip = FeedChip(
+                            title = title,
+                            browseId = browseId,
+                            params = params,
+                            navigationEndpoint = navigationEndpoint,
+                            key = routeKey,
+                        )
+                        chips.putIfAbsent(chip.key, chip)
+                    }
+                }
                 // Members-only videos can't be played (anonymous extraction), and full movies/TV
                 // aren't wanted (Derek), so neither is ever shown.
                 "videoRenderer", "gridVideoRenderer", "compactVideoRenderer", "playlistVideoRenderer" ->
                     if (!isMembersOnly(obj) && !isMovie(obj)) parseVideoRenderer(obj)?.let { videos.putIfAbsent(it.id, it) }
                 "radioRenderer", "compactRadioRenderer", "playlistRadioRenderer", "mixRenderer" ->
-                    parseRadioRenderer(obj)?.let { videos.putIfAbsent(it.id, it) }
+                    parseRadioRenderer(obj)?.let { mix ->
+                        val playlist = mix.mixPlaylistId
+                        if (playlist == null || mixPlaylistIds.add(playlist)) videos.putIfAbsent(mix.feedKey, mix)
+                    }
+                "backstagePostRenderer", "sharedPostRenderer", "postRenderer" -> {
+                    val post = parseCommunityPosts(JSONObject().put(key, obj)).firstOrNull()
+                    if (post != null) {
+                        videos.putIfAbsent(
+                            "post:${post.id}",
+                            VideoItem(
+                                id = "post:${post.id}",
+                                title = post.text.ifBlank { post.author },
+                                channel = post.author,
+                                channelUrl = null,
+                                thumbnail = post.images.firstOrNull(),
+                                avatar = post.authorAvatar,
+                                durationSec = 0L,
+                                views = -1,
+                                uploaded = post.publishedTime,
+                                feedPost = post,
+                            ),
+                        )
+                    }
+                }
                 "lockupViewModel" -> {
                     val contentType = obj.optString("contentType")
                     val contentId = obj.optString("contentId")
                     if (!isMembersOnly(obj) && !isMovie(obj)) {
                         if (contentType == "LOCKUP_CONTENT_TYPE_MIX" || contentType == "LOCKUP_CONTENT_TYPE_PLAYLIST" || contentId.startsWith("RD")) {
-                            parseRadioRenderer(obj)?.let { videos.putIfAbsent(it.id, it) }
+                            parseRadioRenderer(obj)?.let { mix ->
+                                val playlist = mix.mixPlaylistId ?: contentId.takeIf { it.startsWith("RD") }
+                                val identified = if (mix.mixPlaylistId == null) mix.copy(mixPlaylistId = playlist) else mix
+                                if (playlist == null || mixPlaylistIds.add(playlist)) videos.putIfAbsent(identified.feedKey, identified)
+                            }
                         } else if (contentType == "LOCKUP_CONTENT_TYPE_VIDEO") {
                             parseLockup(obj)?.let { videos.putIfAbsent(it.id, it) }
                         }
@@ -695,7 +944,7 @@ object InnerTube {
                     obj.collectStrings("token").firstOrNull()?.let { next = it }
             }
         }
-        return FeedPage(videos.values.toList(), next)
+        return FeedPage(videos.values.toList(), next, chips = chips.values.toList())
     }
 
     /** YouTube's "Members only" badge: BADGE_MEMBERS_ONLY (lockups) / BADGE_STYLE_TYPE_MEMBERS_ONLY (older renderers). */
@@ -726,6 +975,8 @@ object InnerTube {
     private val CONTENT_RATING = Regex("^(G|PG|PG-13|R|NC-17|NR|TV-(Y|Y7|G|PG|14|MA))$")
 
     private fun parseRadioRenderer(o: JSONObject): VideoItem? {
+        val mixPlaylistId = o.collectStrings("playlistId").firstOrNull { it.startsWith("RD") }
+            ?: o.collectStrings("playlistId").firstOrNull { it.startsWith("PL") }
         var videoId: String? = null
         o.walk { key, obj ->
             if (videoId == null && (key == "watchEndpoint" || key == "watchPlaylistEndpoint")) {
@@ -750,6 +1001,7 @@ object InnerTube {
             durationSec = 0L,
             views = -1,
             uploaded = "Mix · Infinite playlist",
+            mixPlaylistId = mixPlaylistId,
         )
     }
 
@@ -771,17 +1023,130 @@ object InnerTube {
             (0 until runs.length()).map { runs.optJSONObject(it).optString("text") }.filter { it.isNotBlank() && it.trim() != "•" }
         }.orEmpty()
         val avatar = pickChannelAvatarUrl(o)
+        val channelText = channelRun?.optString("text").orEmpty()
+        val collabChannels = parseCollabChannelsFromLockup(o, channelText)
+            .ifEmpty { parseCollabChannelsFromVideoRenderer(o, byline) }
+        val feedbackTokens = recommendationFeedbackTokens(o)
+
         return VideoItem(
             id = id,
             title = o.text("title") ?: return null,
-            channel = channelRun?.optString("text").orEmpty(),
+            channel = channelText,
             channelUrl = channelId?.takeIf { it.startsWith("UC") }?.let { "https://www.youtube.com/channel/$it" },
             thumbnail = videoThumbnailUrl(o, id),
             avatar = avatar?.let { sharpenChannelAvatarUrl(absoluteUrl(it), 96) },
             durationSec = if (isLive) 0L else parseDuration(duration),
             views = parseViews(o.text("viewCountText") ?: o.text("shortViewCountText") ?: infoRuns.firstOrNull { it.contains("view") || it.contains("watching") }),
             uploaded = if (isLive) "LIVE NOW" else (o.text("publishedTimeText") ?: infoRuns.firstOrNull { it.contains("ago") }),
+            collabChannels = collabChannels,
+            feedbackTokens = feedbackTokens,
         )
+    }
+
+    internal fun parseCommunityPosts(root: JSONObject): List<CommunityPost> {
+        val posts = ArrayList<CommunityPost>()
+        root.walk { key, obj ->
+            if (key == "backstagePostRenderer" || key == "sharedPostRenderer" || key == "postRenderer") {
+                val id = obj.optString("postId").ifBlank { obj.optString("id") }
+                if (id.isNotBlank()) {
+                    val author = obj.text("authorText") ?: obj.optJSONObject("authorText")?.optJSONArray("runs")?.optJSONObject(0)?.optString("text") ?: "Community"
+                    val avatar = obj.optJSONObject("authorEndpoint")?.optJSONObject("browseEndpoint")?.optJSONObject("avatar")?.thumbnails()?.lastOrNull()
+                        ?: obj.optJSONObject("authorThumbnail")?.thumbnails()?.lastOrNull()
+                    val channelId = obj.optJSONObject("authorEndpoint")
+                        ?.optJSONObject("browseEndpoint")?.optString("browseId")
+                        ?.takeIf { it.startsWith("UC") }
+                        ?: obj.collectStrings("browseId").firstOrNull { it.startsWith("UC") }
+                    var detailParams: String? = null
+                    obj.walk { _, child ->
+                        if (detailParams == null) {
+                            val endpoint = child.optJSONObject("browseEndpoint")
+                            if (endpoint?.optString("browseId") == "FEpost_detail") {
+                                detailParams = endpoint.optString("params").ifBlank { null }
+                            }
+                        }
+                    }
+                    val published = obj.text("publishedTimeText") ?: obj.optJSONObject("publishedTimeText")?.optJSONArray("runs")?.optJSONObject(0)?.optString("text")
+                    val text = obj.text("contentText") ?: obj.collectStrings("text").joinToString(" ")
+
+                    val images = ArrayList<String>()
+                    val pollOptions = ArrayList<PollOption>()
+                    var likeCount = -1
+                    var dislikeCount = -1
+                    var liked = false
+                    var commentCountText: String? = null
+
+                    obj.walk { k, child ->
+                        if (k == "backstageImageRenderer" || k == "imageRenderer") {
+                            child.optJSONObject("image")?.thumbnails()?.lastOrNull()?.let { images.add(absoluteUrl(it)) }
+                        } else if (k == "pollOptionRenderer") {
+                            val optionText = child.text("text") ?: ""
+                            val pct = child.text("votePercentage") ?: child.text("votePercentageIfSubmitted")
+                            val img = child.optJSONObject("image")?.thumbnails()?.lastOrNull()?.let { absoluteUrl(it) }
+                            pollOptions.add(PollOption(optionText, pct, img))
+                        } else if (k == "likeButton") {
+                            child.walk { buttonKey, button ->
+                                if (buttonKey == "toggleButtonRenderer") {
+                                    liked = button.optBoolean("isToggled", liked)
+                                    val count = button.text("defaultText")
+                                    if (likeCount < 0 && count != null) {
+                                        likeCount = parseViews(count).takeIf { it >= 0 }?.toInt() ?: -1
+                                    }
+                                }
+                            }
+                        } else if (k == "dislikeButton") {
+                            child.walk { buttonKey, button ->
+                                if (buttonKey == "toggleButtonRenderer" || buttonKey == "buttonRenderer") {
+                                    val count = button.text("defaultText")
+                                        ?: button.optJSONObject("accessibility")?.optJSONObject("accessibilityData")?.optString("label")
+                                    if (dislikeCount < 0 && count != null) {
+                                        dislikeCount = parseViews(count).takeIf { it >= 0 }?.toInt() ?: -1
+                                    }
+                                }
+                            }
+                        } else if (k == "commentButton") {
+                            child.walk { bk, button ->
+                                if (bk == "buttonRenderer" || bk == "toggleButtonRenderer") {
+                                    commentCountText = button.text("text") ?: button.text("defaultText")
+                                        ?: button.optJSONObject("accessibility")?.optJSONObject("accessibilityData")?.optString("label")
+                                }
+                            }
+                        }
+                    }
+
+                    var imageAspectRatio: Float? = null
+                    obj.walk { k, child ->
+                        if (k == "backstageImageRenderer" || k == "imageRenderer") {
+                            if (imageAspectRatio == null) {
+                                imageAspectRatio = parseImageAspectRatio(child)
+                            }
+                        }
+                    }
+
+                    posts.add(
+                        CommunityPost(
+                            id = id,
+                            author = author,
+                            authorAvatar = avatar,
+                            publishedTime = published,
+                            text = text,
+                            images = images,
+                            pollOptions = pollOptions,
+                            likeCount = likeCount,
+                            dislikeCount = dislikeCount,
+                            liked = liked,
+                            channelId = channelId,
+                            detailParams = detailParams,
+                            commentCountText = commentCountText?.let { txt ->
+                                val nums = txt.filter { it.isDigit() || it == '.' || it.lowercaseChar() == 'k' || it.lowercaseChar() == 'm' }
+                                if (nums.isNotBlank()) nums else null
+                            },
+                            imageAspectRatio = imageAspectRatio,
+                        )
+                    )
+                }
+            }
+        }
+        return posts
     }
 
     private fun parseLockup(o: JSONObject): VideoItem? {
@@ -801,17 +1166,229 @@ object InnerTube {
         }
         val avatar = meta.bestChannelAvatarUrl()
         val duration = o.optJSONObject("contentImage")?.collectStrings("text")?.firstOrNull { DURATION.matches(it) }
+        val channelText = parts.firstOrNull { !it.contains("view") && !it.contains("ago") && !it.contains("watching") }.orEmpty()
+        val collabChannels = parseCollabChannelsFromLockup(o, channelText)
+        val feedbackTokens = recommendationFeedbackTokens(o)
+
         return VideoItem(
             id = id,
             title = title,
-            channel = parts.firstOrNull { !it.contains("view") && !it.contains("ago") && !it.contains("watching") }.orEmpty(),
+            channel = channelText,
             channelUrl = o.collectStrings("browseId").firstOrNull { it.startsWith("UC") }?.let { "https://www.youtube.com/channel/$it" },
             thumbnail = videoThumbnailUrl(o, id),
             avatar = avatar?.let { sharpenChannelAvatarUrl(absoluteUrl(it), 96) },
             durationSec = if (isLive) 0L else parseDuration(duration),
             views = parseViews(parts.firstOrNull { it.contains("view") || it.contains("watching") }),
             uploaded = if (isLive) "LIVE NOW" else parts.firstOrNull { it.contains("ago") },
+            collabChannels = collabChannels,
+            feedbackTokens = feedbackTokens,
         )
+    }
+
+    private fun recommendationFeedbackTokens(root: JSONObject): Map<String, String> {
+        val result = LinkedHashMap<String, String>()
+        root.walk { key, renderer ->
+            if (key != "menuServiceItemRenderer") return@walk
+            val label = renderer.text("text")
+                ?: renderer.optJSONObject("text")?.optJSONArray("runs")?.optJSONObject(0)?.optString("text")
+                ?: return@walk
+            val normalized = label.lowercase()
+            val action = when {
+                "not interested" in normalized -> "not_interested"
+                "interested" in normalized -> "interested"
+                else -> return@walk
+            }
+            renderer.collectStrings("feedbackToken").firstOrNull()?.let { result[action] = it }
+        }
+        return result
+    }
+
+    internal fun parseCollabChannelsFromNext(nextRoot: JSONObject): List<ChannelRef> {
+        val result = mutableListOf<ChannelRef>()
+        nextRoot.forEachObject { obj ->
+            val collaborators = obj.optJSONArray("collaborators")
+                ?: obj.optJSONArray("collaboratorRenderers")
+                ?: obj.optJSONArray("channelLockups")
+            if (collaborators != null && collaborators.length() > 0) {
+                for (i in 0 until collaborators.length()) {
+                    val cObj = collaborators.optJSONObject(i) ?: continue
+                    val text = cObj.text("title") ?: cObj.text("name") ?: cObj.optString("text")
+                    val browseId = cObj.collectStrings("browseId").firstOrNull { it.startsWith("UC") }
+                    val avatar = cObj.bestChannelAvatarUrl() ?: browseId?.let { ChannelAvatars.known[it] }
+                    val handle = cObj.collectStrings("canonicalBaseUrl").firstOrNull { it.startsWith("/@") }?.removePrefix("/")
+                        ?: cObj.text("handle")
+                        ?: cObj.collectStrings("text").firstOrNull { it.startsWith("@") }
+                    val subText = cObj.text("subscriberCountText")
+                        ?: cObj.collectStrings("text").firstOrNull { "subscriber" in it || "lakh" in it || "k" in it.lowercase() || "m" in it.lowercase() }
+                    val verified = parseChannelVerified(cObj)
+                    if (!text.isNullOrBlank() && browseId != null) {
+                        result.add(
+                            ChannelRef(
+                                id = browseId,
+                                name = text,
+                                avatar = avatar,
+                                handle = handle,
+                                subscriberCountText = subText,
+                                verified = verified,
+                            )
+                        )
+                    }
+                }
+            }
+            val runs = obj.optJSONObject("title")?.optJSONArray("runs")
+                ?: obj.optJSONObject("ownerText")?.optJSONArray("runs")
+                ?: obj.optJSONObject("shortBylineText")?.optJSONArray("runs")
+                ?: obj.optJSONObject("longBylineText")?.optJSONArray("runs")
+            if (runs != null && runs.length() >= 3) {
+                val runsChannels = mutableListOf<ChannelRef>()
+                val thumbnails = obj.optJSONObject("thumbnail")?.thumbnails() ?: emptyList()
+                for (i in 0 until runs.length()) {
+                    val r = runs.optJSONObject(i) ?: continue
+                    val text = r.optString("text").trim()
+                    val browseId = r.optJSONObject("navigationEndpoint")
+                        ?.optJSONObject("browseEndpoint")
+                        ?.optString("browseId")
+                        ?.takeIf { it.startsWith("UC") }
+                    val canonical = r.optJSONObject("navigationEndpoint")
+                        ?.optJSONObject("browseEndpoint")
+                        ?.optString("canonicalBaseUrl")
+                        ?.takeIf { it.startsWith("/@") }
+                        ?.removePrefix("/")
+                    if (!browseId.isNullOrBlank() && text.isNotBlank() && text != "&" && text != "," && text.lowercase() != "and") {
+                        val avatar = thumbnails.getOrNull(runsChannels.size)?.let { absoluteUrl(it) }
+                            ?: obj.bestChannelAvatarUrl()
+                            ?: ChannelAvatars.known[browseId]
+                        runsChannels.add(
+                            ChannelRef(
+                                id = browseId,
+                                name = text,
+                                avatar = avatar,
+                                handle = canonical,
+                            )
+                        )
+                    }
+                }
+                if (runsChannels.size >= 2) {
+                    result.addAll(runsChannels)
+                }
+            }
+        }
+        val distinct = result.distinctBy { it.id }
+        if (distinct.size >= 2) return distinct
+
+        val ownerText = nextRoot.collectStrings("ownerText") + nextRoot.collectStrings("shortBylineText") + nextRoot.collectStrings("longBylineText")
+        val textToTry = ownerText.firstOrNull { it.contains(" and ", ignoreCase = true) || it.contains(" & ", ignoreCase = true) }
+        return parseCollabChannelsFromLockup(nextRoot, textToTry)
+    }
+
+    internal fun parseCollabChannelsFromByline(byline: JSONObject?): List<ChannelRef> {
+        val runs = byline?.optJSONArray("runs") ?: return emptyList()
+        if (runs.length() < 3) return emptyList()
+        val list = mutableListOf<ChannelRef>()
+        for (i in 0 until runs.length()) {
+            val r = runs.optJSONObject(i) ?: continue
+            val text = r.optString("text").trim()
+            val browseEndpoint = r.optJSONObject("navigationEndpoint")?.optJSONObject("browseEndpoint")
+            val browseId = browseEndpoint?.optString("browseId")?.takeIf { it.startsWith("UC") }
+            val canonical = browseEndpoint?.optString("canonicalBaseUrl")?.takeIf { it.startsWith("/@") }?.removePrefix("/")
+            if (!browseId.isNullOrBlank() && text.isNotBlank() && text != "&" && text != "," && text.lowercase() != "and") {
+                val avatar = ChannelAvatars.known[browseId]
+                list.add(ChannelRef(id = browseId, name = text, avatar = avatar, handle = canonical))
+            }
+        }
+        return if (list.size >= 2) list.distinctBy { it.id } else emptyList()
+    }
+
+    internal fun parseCollabChannelsFromVideoRenderer(o: JSONObject, byline: JSONObject?): List<ChannelRef> {
+        val list = mutableListOf<ChannelRef>()
+        o.forEachObject { obj ->
+            val collaborators = obj.optJSONArray("collaborators")
+                ?: obj.optJSONArray("collaboratorRenderers")
+                ?: obj.optJSONArray("channelLockups")
+            if (collaborators != null && collaborators.length() > 0) {
+                for (i in 0 until collaborators.length()) {
+                    val cObj = collaborators.optJSONObject(i) ?: continue
+                    val text = cObj.text("title") ?: cObj.text("name") ?: cObj.optString("text")
+                    val browseId = cObj.collectStrings("browseId").firstOrNull { it.startsWith("UC") }
+                    val avatar = cObj.bestChannelAvatarUrl() ?: browseId?.let { ChannelAvatars.known[it] }
+                    val handle = cObj.collectStrings("canonicalBaseUrl").firstOrNull { it.startsWith("/@") }?.removePrefix("/")
+                        ?: cObj.collectStrings("text").firstOrNull { it.startsWith("@") }
+                    val subText = cObj.text("subscriberCountText")
+                    if (!text.isNullOrBlank() && browseId != null) {
+                        list.add(ChannelRef(id = browseId, name = text, avatar = avatar, handle = handle, subscriberCountText = subText))
+                    }
+                }
+            }
+        }
+        if (list.size >= 2) return list.distinctBy { it.id }
+        return parseCollabChannelsFromByline(byline)
+    }
+
+    internal fun parseCollabChannelsFromLockup(o: JSONObject, channelText: String?): List<ChannelRef> {
+        val list = mutableListOf<ChannelRef>()
+        o.forEachObject { obj ->
+            val collaborators = obj.optJSONArray("collaborators")
+                ?: obj.optJSONArray("collaboratorRenderers")
+                ?: obj.optJSONArray("channelLockups")
+            if (collaborators != null && collaborators.length() > 0) {
+                for (i in 0 until collaborators.length()) {
+                    val cObj = collaborators.optJSONObject(i) ?: continue
+                    val text = cObj.text("title") ?: cObj.text("name") ?: cObj.optString("text")
+                    val browseId = cObj.collectStrings("browseId").firstOrNull { it.startsWith("UC") }
+                    val avatar = cObj.bestChannelAvatarUrl() ?: browseId?.let { ChannelAvatars.known[it] }
+                    val handle = cObj.collectStrings("canonicalBaseUrl").firstOrNull { it.startsWith("/@") }?.removePrefix("/")
+                        ?: cObj.text("handle")
+                        ?: cObj.collectStrings("text").firstOrNull { it.startsWith("@") }
+                    val subText = cObj.text("subscriberCountText")
+                    if (!text.isNullOrBlank() && browseId != null) {
+                        list.add(ChannelRef(id = browseId, name = text, avatar = avatar, handle = handle, subscriberCountText = subText))
+                    }
+                }
+            }
+        }
+        if (list.size >= 2) return list.distinctBy { it.id }
+
+        val rawText = channelText?.trim() ?: return emptyList()
+        val andRegex = Regex("\\s+(and|&)\\s+", RegexOption.IGNORE_CASE)
+        if (!andRegex.containsMatchIn(rawText)) return emptyList()
+
+        val parts = rawText.split(andRegex).map { it.trim() }.filter { it.isNotBlank() }
+        if (parts.isEmpty()) return emptyList()
+
+        val browseIds = o.collectStrings("browseId").filter { it.startsWith("UC") }.distinct()
+        val canonicals = o.collectStrings("canonicalBaseUrl").filter { it.startsWith("/@") }.map { it.removePrefix("/") }.distinct()
+
+        val result = mutableListOf<ChannelRef>()
+        val ch1Name = parts[0]
+        val ch1Id = browseIds.getOrNull(0) ?: ""
+        val ch1Avatar = ChannelAvatars.known[ch1Id]
+        val ch1Handle = canonicals.getOrNull(0)
+        result.add(ChannelRef(id = ch1Id, name = ch1Name, avatar = ch1Avatar, handle = ch1Handle))
+
+        if (parts.size >= 2) {
+            val secondPart = parts[1]
+            val moreMatch = Regex("(\\d+)\\s*(more|others)", RegexOption.IGNORE_CASE).find(secondPart)
+            if (moreMatch != null) {
+                val count = moreMatch.groupValues[1].toIntOrNull() ?: 2
+                for (idx in 1..count) {
+                    val cId = browseIds.getOrNull(idx) ?: if (ch1Id.length > 2) "${ch1Id}_collab_$idx" else ""
+                    val cHandle = canonicals.getOrNull(idx)
+                    val cName = cHandle?.removePrefix("@") ?: if (cId.startsWith("UC")) "Channel" else "Collaborator"
+                    val cAvatar = ChannelAvatars.known[cId]
+                    result.add(ChannelRef(id = cId, name = cName, avatar = cAvatar, handle = cHandle))
+                }
+            } else {
+                for (idx in 1 until parts.size) {
+                    val cName = parts[idx]
+                    val cId = browseIds.getOrNull(idx) ?: if (ch1Id.length > 2) "${ch1Id}_collab_$idx" else ""
+                    val cAvatar = ChannelAvatars.known[cId]
+                    val cHandle = canonicals.getOrNull(idx)
+                    result.add(ChannelRef(id = cId, name = cName, avatar = cAvatar, handle = cHandle))
+                }
+            }
+        }
+
+        return if (result.size >= 2) result else emptyList()
     }
 
     private fun pickChannelAvatarUrl(o: JSONObject): String? {
@@ -1017,6 +1594,23 @@ internal fun JSONObject.text(key: String): String? {
 internal fun JSONObject.thumbnails(): List<String>? {
     val arr = optJSONObject("thumbnail")?.optJSONArray("thumbnails") ?: optJSONArray("thumbnails") ?: return null
     return (0 until arr.length()).mapNotNull { arr.optJSONObject(it)?.optString("url")?.ifBlank { null } }
+}
+
+internal fun parseImageAspectRatio(child: JSONObject): Float? {
+    val imageObj = child.optJSONObject("image") ?: child
+    val arr = imageObj.optJSONObject("thumbnail")?.optJSONArray("thumbnails")
+        ?: imageObj.optJSONArray("thumbnails")
+        ?: child.optJSONObject("thumbnail")?.optJSONArray("thumbnails")
+        ?: return null
+    for (i in (arr.length() - 1) downTo 0) {
+        val o = arr.optJSONObject(i) ?: continue
+        val w = o.optInt("width", 0)
+        val h = o.optInt("height", 0)
+        if (w > 0 && h > 0) {
+            return (w.toFloat() / h.toFloat()).coerceIn(0.5f, 3.0f)
+        }
+    }
+    return null
 }
 
 internal fun JSONArray.widestSourceUrl(): String? {

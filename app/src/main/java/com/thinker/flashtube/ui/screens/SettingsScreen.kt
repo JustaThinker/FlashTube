@@ -1,6 +1,7 @@
 package com.thinker.flashtube
 
 import androidx.activity.compose.BackHandler
+import com.thinker.flashtube.data.ContentRegion
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -9,6 +10,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -47,6 +49,9 @@ import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.HighQuality
+import androidx.compose.material.icons.rounded.SignalCellularAlt
+import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -55,9 +60,11 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -79,6 +86,7 @@ enum class SettingsSection(
     val icon: ImageVector,
 ) {
     Appearance("Appearance", Icons.Rounded.DarkMode),
+    ContentRegion("Content Region", Icons.Rounded.Public),
     Playback("Playback", Icons.Rounded.PlayCircle),
     SponsorBlock("SponsorBlock", Icons.Rounded.FastForward),
     DataStorage("Data & Storage", Icons.Rounded.Storage),
@@ -132,8 +140,13 @@ fun SettingsScreen(
                     onBack = { currentSection = null },
                     contentPadding = contentPadding,
                 )
+                SettingsSection.ContentRegion -> ContentRegionPage(
+                    onBack = { currentSection = null },
+                    contentPadding = contentPadding,
+                )
                 SettingsSection.Playback -> PlaybackPage(
                     onBack = { currentSection = null },
+                    onOpenContentRegion = { currentSection = SettingsSection.ContentRegion },
                     contentPadding = contentPadding,
                 )
                 SettingsSection.SponsorBlock -> SponsorBlockPage(
@@ -187,7 +200,7 @@ private fun SettingsMainList(
         ) {
             Spacer(Modifier.height(4.dp))
 
-            // Account card at top
+            SonicSpaceSectionTitle("Account")
             SettingsProfileCard(
                 profile = profile,
                 onSignIn = onSignIn,
@@ -283,13 +296,22 @@ private fun CategoryRow(
             )
         }
         Spacer(Modifier.width(14.dp))
-        Text(
-            text = section.title,
-            fontWeight = FontWeight.SemiBold,
-            fontSize = 15.5.sp,
-            color = c.onSurface,
-            modifier = Modifier.weight(1f),
-        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = section.title,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 15.5.sp,
+                color = c.onSurface,
+            )
+            if (section == SettingsSection.ContentRegion) {
+                Text(
+                    text = ContentRegion.displaySummary,
+                    fontSize = 12.5.sp,
+                    color = c.primary,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
+        }
         Icon(
             imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
             contentDescription = null,
@@ -342,28 +364,57 @@ private fun AppearancePage(
                 modifier = Modifier.padding(top = 4.dp, bottom = 14.dp),
             )
 
-            // Three-option segmented chip selector
-            Row(
+            // Four-option theme selector including OLED AMOLED Pitch Black
+            Column(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                listOf("system" to "System", "light" to "Light", "dark" to "Dark").forEach { (key, label) ->
-                    val on = ThemeSettings.mode == key
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .pressable { ThemeSettings.chooseMode(key) }
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(if (on) c.primary else c.surfaceContainerHigh)
-                            .padding(vertical = 12.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = label,
-                            color = if (on) c.onPrimary else c.onSurfaceVariant,
-                            fontWeight = if (on) FontWeight.Bold else FontWeight.Medium,
-                            fontSize = 12.5.sp,
-                        )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    listOf("system" to "System", "light" to "Light").forEach { (key, label) ->
+                        val on = ThemeSettings.mode == key
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .pressable { ThemeSettings.chooseMode(key) }
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (on) c.primary else c.surfaceContainerHigh)
+                                .padding(vertical = 12.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = label,
+                                color = if (on) c.onPrimary else c.onSurfaceVariant,
+                                fontWeight = if (on) FontWeight.Bold else FontWeight.Medium,
+                                fontSize = 13.sp,
+                            )
+                        }
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    listOf("dark" to "Dark", "amoled" to "OLED Black").forEach { (key, label) ->
+                        val on = ThemeSettings.mode == key
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .pressable { ThemeSettings.chooseMode(key) }
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (on) c.primary else c.surfaceContainerHigh)
+                                .padding(vertical = 12.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = label,
+                                color = if (on) c.onPrimary else c.onSurfaceVariant,
+                                fontWeight = if (on) FontWeight.Bold else FontWeight.Medium,
+                                fontSize = 13.sp,
+                            )
+                        }
                     }
                 }
             }
@@ -373,37 +424,17 @@ private fun AppearancePage(
             Spacer(Modifier.height(16.dp))
 
             Text(
-                text = "Display details",
+                text = "Display details & Effects",
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.SemiBold,
                 color = c.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = 6.dp),
             )
-
-            SettingsRow(
-                icon = Icons.Rounded.DarkMode,
-                title = "OLED Friendly Dark Theme",
-                subtitle = "Uses deep dark surfaces for minimal battery consumption on OLED displays.",
-            )
-
-            Spacer(Modifier.height(20.dp))
-            HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f))
-            Spacer(Modifier.height(16.dp))
-
-            Text(
-                text = "Location & Region",
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold,
-                color = c.onSurfaceVariant,
-                modifier = Modifier.padding(bottom = 6.dp),
-            )
-
-            var showRegionDialog by remember { mutableStateOf(false) }
 
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .pressable { showRegionDialog = true }
+                    .pressable { AmbientMode.set(!AmbientMode.enabled) }
                     .padding(vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -414,48 +445,112 @@ private fun AppearancePage(
                         .background(c.surfaceContainerHigh),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Public,
-                        contentDescription = null,
-                        tint = c.onSurface,
-                        modifier = Modifier.size(20.dp),
-                    )
+                    Icon(Icons.Rounded.AutoAwesome, null, tint = c.onSurfaceVariant, modifier = Modifier.size(19.dp))
                 }
-
                 Spacer(Modifier.width(14.dp))
-
                 Column(Modifier.weight(1f)) {
+                    Text("Ambient lighting effect", fontWeight = FontWeight.SemiBold, fontSize = 15.sp, color = c.onSurface)
                     Text(
-                        text = "Content Location / Region",
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 15.sp,
-                        color = c.onSurface,
-                    )
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        text = "${RegionSettings.labelFor(RegionSettings.code)} (${RegionSettings.code})",
-                        fontSize = 12.5.sp,
-                        color = c.primary,
-                        fontWeight = FontWeight.Bold,
+                        "Casts a soft ambient glow of video colors behind the player",
+                        fontSize = 12.sp,
+                        color = c.onSurfaceVariant,
                     )
                 }
-
-                Icon(
-                    imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                    contentDescription = null,
-                    tint = c.onSurfaceVariant,
-                    modifier = Modifier.size(20.dp),
+                Spacer(Modifier.width(8.dp))
+                Switch(
+                    checked = AmbientMode.enabled,
+                    onCheckedChange = AmbientMode::set,
+                    colors = SwitchDefaults.colors(checkedTrackColor = c.primary),
                 )
             }
 
-            if (showRegionDialog) {
-                RegionSelectorDialog(
-                    onDismiss = { showRegionDialog = false },
-                    onSelectRegion = { newCode ->
-                        RegionSettings.set(newCode)
-                        showRegionDialog = false
-                    },
-                )
+        }
+    }
+}
+
+// ── 1b. Content Region Page ───────────────────────────────────────────────────
+
+@Composable
+private fun ContentRegionPage(
+    onBack: () -> Unit,
+    contentPadding: PaddingValues,
+) {
+    val c = MaterialTheme.colorScheme
+    val scrollState = rememberScrollState()
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        BackScreenHeader(onBack = onBack) {
+            Text(
+                text = "Content Region",
+                fontFamily = RoundedHeavy,
+                fontWeight = FontWeight.Bold,
+                fontSize = 22.sp,
+                letterSpacing = (-0.5).sp,
+            )
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(scrollState)
+                .padding(horizontal = 20.dp)
+                .padding(bottom = contentPadding.calculateBottomPadding() + 28.dp),
+        ) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "Select feed & search region",
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 15.5.sp,
+                color = c.onSurface,
+            )
+            Text(
+                text = "Controls the country used for YouTube search results, home feed recommendations, and trending videos.",
+                fontSize = 12.5.sp,
+                color = c.onSurfaceVariant,
+                lineHeight = 17.sp,
+                modifier = Modifier.padding(top = 4.dp, bottom = 14.dp),
+            )
+
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                ContentRegion.supportedRegions.forEach { item ->
+                    val isSelected = ContentRegion.code == item.code
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(if (isSelected) c.primaryContainer.copy(alpha = 0.4f) else c.surfaceContainerLow)
+                            .pressable { ContentRegion.setRegion(item.code) }
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = item.name,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                fontSize = 15.sp,
+                                color = if (isSelected) c.primary else c.onSurface,
+                            )
+                            if (item.code != ContentRegion.AUTO_REGION) {
+                                Text(
+                                    text = "Region code: ${item.code}",
+                                    fontSize = 12.sp,
+                                    color = c.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        if (isSelected) {
+                            Icon(
+                                imageVector = Icons.Rounded.Check,
+                                contentDescription = "Selected",
+                                tint = c.primary,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -478,8 +573,10 @@ private fun RegionSelectorDialog(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                RegionSettings.REGIONS.forEach { (code, name) ->
-                    val isSelected = RegionSettings.code.equals(code, ignoreCase = true)
+                ContentRegion.supportedRegions.forEach { region ->
+                    val code = region.code
+                    val name = region.name
+                    val isSelected = ContentRegion.code.equals(code, ignoreCase = true)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -520,6 +617,7 @@ private fun RegionSelectorDialog(
 @Composable
 private fun PlaybackPage(
     onBack: () -> Unit,
+    onOpenContentRegion: () -> Unit,
     contentPadding: PaddingValues,
 ) {
     val c = MaterialTheme.colorScheme
@@ -545,38 +643,87 @@ private fun PlaybackPage(
         ) {
             Spacer(Modifier.height(8.dp))
 
-            // Audio only mode
+            // Content region setting row
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .pressable { AudioOnly.toggle() }
+                    .pressable { onOpenContentRegion() }
                     .padding(vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box(
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(c.surfaceContainerHigh),
+                    modifier = Modifier.size(36.dp).clip(CircleShape).background(c.surfaceContainerHigh),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(Icons.Rounded.PlayCircle, null, tint = c.onSurfaceVariant, modifier = Modifier.size(19.dp))
+                    Icon(Icons.Rounded.Public, null, tint = c.onSurfaceVariant, modifier = Modifier.size(19.dp))
                 }
                 Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f)) {
-                    Text("Audio only mode", fontWeight = FontWeight.SemiBold, fontSize = 15.sp, color = c.onSurface)
-                    Text(
-                        "Disables video decoding to save bandwidth and battery",
-                        fontSize = 12.sp,
-                        color = c.onSurfaceVariant,
-                    )
+                    Text("Content region", fontWeight = FontWeight.SemiBold, fontSize = 15.sp, color = c.onSurface)
+                    Text("Location for feeds & search recommendations", fontSize = 12.sp, color = c.onSurfaceVariant)
                 }
                 Spacer(Modifier.width(8.dp))
-                Switch(
-                    checked = AudioOnly.enabled,
-                    onCheckedChange = AudioOnly::set,
-                    colors = SwitchDefaults.colors(checkedTrackColor = c.primary),
+                Text(
+                    text = ContentRegion.displaySummary,
+                    fontSize = 13.sp,
+                    color = c.primary,
+                    fontWeight = FontWeight.Medium,
                 )
+                Spacer(Modifier.width(4.dp))
+                Icon(
+                    imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                    contentDescription = null,
+                    tint = c.onSurfaceVariant.copy(alpha = 0.6f),
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+
+            HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f), modifier = Modifier.padding(vertical = 4.dp))
+
+            // Double tap seek step
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 12.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier.size(36.dp).clip(CircleShape).background(c.surfaceContainerHigh),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(Icons.Rounded.FastForward, null, tint = c.onSurfaceVariant, modifier = Modifier.size(19.dp))
+                    }
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Double-tap to seek", fontWeight = FontWeight.SemiBold, fontSize = 15.sp, color = c.onSurface)
+                        Text("Choose seek step interval on double-tap", fontSize = 12.sp, color = c.onSurfaceVariant)
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    SeekConfig.options.forEach { sec ->
+                        val active = SeekConfig.stepSeconds == sec
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (active) c.primary else c.surfaceContainerHigh)
+                                .clickable { SeekConfig.setStep(sec) }
+                                .padding(vertical = 8.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                "${sec}s",
+                                color = if (active) c.onPrimary else c.onSurface,
+                                fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+                                fontSize = 13.sp,
+                            )
+                        }
+                    }
+                }
             }
 
             HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f), modifier = Modifier.padding(vertical = 4.dp))
@@ -641,6 +788,239 @@ private fun PlaybackPage(
                 Switch(
                     checked = PlaybackSpeed.remember,
                     onCheckedChange = { PlaybackSpeed.setRemember(it, PlaybackSpeed.saved) },
+                    colors = SwitchDefaults.colors(checkedTrackColor = c.primary),
+                )
+            }
+
+            HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f), modifier = Modifier.padding(vertical = 4.dp))
+
+            // Double-tap seek step
+            var showSeekDialog by remember { mutableStateOf(false) }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .pressable { showSeekDialog = true }
+                    .padding(vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(c.surfaceContainerHigh),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Rounded.FastForward, null, tint = c.onSurfaceVariant, modifier = Modifier.size(19.dp))
+                }
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Double-tap seek step", fontWeight = FontWeight.SemiBold, fontSize = 15.sp, color = c.onSurface)
+                    Text(
+                        "${SeekConfig.stepSeconds} seconds",
+                        fontSize = 12.sp,
+                        color = c.onSurfaceVariant,
+                    )
+                }
+            }
+
+            if (showSeekDialog) {
+                AlertDialog(
+                    onDismissRequest = { showSeekDialog = false },
+                    title = { Text("Double-tap seek step", fontWeight = FontWeight.Bold) },
+                    text = {
+                        Column {
+                            SeekConfig.options.forEach { step ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .pressable {
+                                            SeekConfig.setStep(step)
+                                            showSeekDialog = false
+                                        }
+                                        .padding(vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    RadioButton(
+                                        selected = SeekConfig.stepSeconds == step,
+                                        onClick = {
+                                            SeekConfig.setStep(step)
+                                            showSeekDialog = false
+                                        },
+                                    )
+                                    Spacer(Modifier.width(12.dp))
+                                    Text("$step seconds", fontSize = 15.sp)
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { showSeekDialog = false }) {
+                            Text("Cancel")
+                        }
+                    },
+                )
+            }
+
+            HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f), modifier = Modifier.padding(vertical = 4.dp))
+
+            // Wi-Fi Default Video Quality
+            var showWifiQualityDialog by remember { mutableStateOf(false) }
+            val wifiQualityOptions = listOf(null to "Auto", 720 to "720p (HD)", 1080 to "1080p (Full HD)", 1440 to "1440p (QHD)", 2160 to "2160p (4K)")
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .pressable { showWifiQualityDialog = true }
+                    .padding(vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier.size(36.dp).clip(CircleShape).background(c.surfaceContainerHigh),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Rounded.Wifi, null, tint = c.onSurfaceVariant, modifier = Modifier.size(19.dp))
+                }
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Wi-Fi default quality", fontWeight = FontWeight.SemiBold, fontSize = 15.sp, color = c.onSurface)
+                    val wifiLabel = QualityPreference.wifiDefaultHeight?.let { "${it}p" } ?: "Auto"
+                    Text("Quality on unmetered networks ($wifiLabel)", fontSize = 12.sp, color = c.onSurfaceVariant)
+                }
+            }
+
+            if (showWifiQualityDialog) {
+                AlertDialog(
+                    onDismissRequest = { showWifiQualityDialog = false },
+                    title = { Text("Wi-Fi default quality", fontWeight = FontWeight.Bold) },
+                    text = {
+                        Column {
+                            wifiQualityOptions.forEach { (h, label) ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .pressable {
+                                            QualityPreference.setWifiDefault(h)
+                                            showWifiQualityDialog = false
+                                        }
+                                        .padding(vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    RadioButton(
+                                        selected = h == QualityPreference.wifiDefaultHeight,
+                                        onClick = {
+                                            QualityPreference.setWifiDefault(h)
+                                            showWifiQualityDialog = false
+                                        },
+                                    )
+                                    Spacer(Modifier.width(12.dp))
+                                    Text(label, fontSize = 15.sp)
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { showWifiQualityDialog = false }) {
+                            Text("Cancel")
+                        }
+                    },
+                )
+            }
+
+            HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f), modifier = Modifier.padding(vertical = 4.dp))
+
+            // Mobile Data Default Video Quality
+            var showMobileQualityDialog by remember { mutableStateOf(false) }
+            val mobileQualityOptions = listOf(null to "Auto (Max 720p)", 360 to "360p (Data saver)", 480 to "480p", 720 to "720p (HD)", 1080 to "1080p (Full HD)")
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .pressable { showMobileQualityDialog = true }
+                    .padding(vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier.size(36.dp).clip(CircleShape).background(c.surfaceContainerHigh),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Rounded.SignalCellularAlt, null, tint = c.onSurfaceVariant, modifier = Modifier.size(19.dp))
+                }
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Mobile data default quality", fontWeight = FontWeight.SemiBold, fontSize = 15.sp, color = c.onSurface)
+                    val mobileLabel = QualityPreference.mobileDefaultHeight?.let { "${it}p" } ?: "Auto"
+                    Text("Quality on metered networks ($mobileLabel)", fontSize = 12.sp, color = c.onSurfaceVariant)
+                }
+            }
+
+            if (showMobileQualityDialog) {
+                AlertDialog(
+                    onDismissRequest = { showMobileQualityDialog = false },
+                    title = { Text("Mobile data default quality", fontWeight = FontWeight.Bold) },
+                    text = {
+                        Column {
+                            mobileQualityOptions.forEach { (h, label) ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .pressable {
+                                            QualityPreference.setMobileDefault(h)
+                                            showMobileQualityDialog = false
+                                        }
+                                        .padding(vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    RadioButton(
+                                        selected = h == QualityPreference.mobileDefaultHeight,
+                                        onClick = {
+                                            QualityPreference.setMobileDefault(h)
+                                            showMobileQualityDialog = false
+                                        },
+                                    )
+                                    Spacer(Modifier.width(12.dp))
+                                    Text(label, fontSize = 15.sp)
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { showMobileQualityDialog = false }) {
+                            Text("Cancel")
+                        }
+                    },
+                )
+            }
+
+            HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f), modifier = Modifier.padding(vertical = 4.dp))
+
+            // Prefer HDR Video Streams
+            var preferHdrState by remember { mutableStateOf(QualityPreference.preferHdr) }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .pressable {
+                        preferHdrState = !preferHdrState
+                        QualityPreference.setPreferHdr(preferHdrState)
+                    }
+                    .padding(vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier.size(36.dp).clip(CircleShape).background(c.surfaceContainerHigh),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Rounded.HighQuality, null, tint = c.onSurfaceVariant, modifier = Modifier.size(19.dp))
+                }
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Prefer HDR video", fontWeight = FontWeight.SemiBold, fontSize = 15.sp, color = c.onSurface)
+                    Text("Prioritize HDR dynamic range streams when available", fontSize = 12.sp, color = c.onSurfaceVariant)
+                }
+                Spacer(Modifier.width(8.dp))
+                Switch(
+                    checked = preferHdrState,
+                    onCheckedChange = {
+                        preferHdrState = it
+                        QualityPreference.setPreferHdr(it)
+                    },
                     colors = SwitchDefaults.colors(checkedTrackColor = c.primary),
                 )
             }
@@ -971,7 +1351,7 @@ private fun SettingsProfileCard(
     val c = MaterialTheme.colorScheme
     val isLoggedIn = profile != null
     val accounts = Account.accounts
-    var expanded by remember { mutableStateOf(false) }
+    var expanded by rememberSaveable { mutableStateOf(false) }
 
     Card(
         shape = RoundedCornerShape(20.dp),
@@ -1065,7 +1445,7 @@ private fun SettingsProfileCard(
                     Spacer(Modifier.height(3.dp))
 
                     Text(
-                        text = if (isLoggedIn) (profile?.handle ?: "Active account") else "Sign in to sync your subscriptions & recommendations",
+                        text = if (isLoggedIn) (profile?.handle ?: "Active account") else "Sign in to sync your library",
                         fontSize = 12.5.sp,
                         color = c.onSurfaceVariant,
                         maxLines = 1,
@@ -1074,40 +1454,50 @@ private fun SettingsProfileCard(
                 }
 
                 // Action Button / Switcher Toggle
-                if (isLoggedIn && accounts.size > 1) {
+                if (isLoggedIn) {
                     Box(
                         modifier = Modifier
                             .pressable { expanded = !expanded }
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(c.surfaceContainerHighest)
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                            .size(40.dp)
+                            .clip(CircleShape),
+                        contentAlignment = Alignment.Center,
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Switch", fontSize = 12.5.sp, fontWeight = FontWeight.Bold, color = c.primary)
-                            Spacer(Modifier.width(4.dp))
-                            Icon(
-                                if (expanded) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
-                                contentDescription = null,
-                                tint = c.primary,
-                                modifier = Modifier.size(16.dp),
-                            )
-                        }
+                        Icon(
+                            if (expanded) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
+                            contentDescription = if (expanded) "Collapse accounts" else "Expand accounts",
+                            tint = c.onSurfaceVariant,
+                            modifier = Modifier.size(24.dp),
+                        )
                     }
                 } else if (!isLoggedIn) {
                     Box(
                         modifier = Modifier
-                            .pressable(onClick = onSignIn)
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(c.primary)
-                            .padding(horizontal = 16.dp, vertical = 9.dp),
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(c.surfaceContainerHighest)
+                            .padding(horizontal = 7.dp, vertical = 4.dp),
                     ) {
-                        Text("Sign in", color = c.onPrimary, fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
+                        Text("SIGNED OUT", color = c.onSurfaceVariant, fontWeight = FontWeight.Bold, fontSize = 9.sp)
                     }
                 }
             }
 
-            // Saved Accounts List (Multi-Account Switcher)
-            if (isLoggedIn) {
+            if (!isLoggedIn) {
+                Spacer(Modifier.height(16.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .pressable(onClick = onSignIn)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(c.primary)
+                        .padding(vertical = 12.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("Sign in", color = c.onPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                }
+            }
+
+            // Keep saved accounts collapsed until the account chevron is opened.
+            if (isLoggedIn && expanded) {
                 Spacer(Modifier.height(14.dp))
                 HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f))
                 Spacer(Modifier.height(12.dp))
@@ -1164,6 +1554,16 @@ private fun SettingsProfileCard(
                         }
                         Spacer(Modifier.width(10.dp))
                         Text("Add another account", color = c.primary, fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .pressable(onClick = onSignOut)
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("Sign out", color = c.error, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp)
                     }
                 }
             }

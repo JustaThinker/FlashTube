@@ -215,19 +215,8 @@ fun DownloadsScreen(
                 item(key = "empty") {
                     Box(Modifier.fillMaxWidth().padding(top = 28.dp)) {
                         EmptyState(
-                            icon = if (section == 0) Icons.Rounded.Download else Icons.Rounded.MusicNote,
-                            title = if (section == 0) "No videos downloaded yet" else "No music downloaded yet",
-                            body = if (section == 0) {
-                                "Videos you download are saved here and play without a connection."
-                            } else {
-                                "Songs you download from Music are saved here for offline listening."
-                            },
-                            action = {
-                                PillButton(
-                                    if (section == 0) "Browse videos" else "Browse music",
-                                    if (section == 0) onBrowse else onBrowseMusic,
-                                )
-                            },
+                            icon = Icons.Rounded.Download,
+                            title = "No downloads",
                         )
                     }
                 }

@@ -92,6 +92,55 @@ class PlayerState(private val scope: CoroutineScope) {
         actionMessage = if (loopEnabled) "Loop on" else "Loop off"
     }
 
+    // ── A-B Segment Loop ──
+    var pointA by mutableStateOf<Long?>(null)
+        private set
+    var pointB by mutableStateOf<Long?>(null)
+        private set
+    var abLoopEnabled by mutableStateOf(false)
+        private set
+
+    fun markPointA(ms: Long? = positionMs) {
+        pointA = ms
+        if (ms != null && pointB != null && ms >= pointB!!) {
+            pointB = null
+        }
+        actionMessage = if (ms != null) "Point A set to ${formatDuration(ms)}" else "Point A cleared"
+    }
+
+    fun markPointB(ms: Long? = positionMs) {
+        if (pointA != null && ms != null && ms <= pointA!!) {
+            actionMessage = "Point B must be after Point A"
+            return
+        }
+        pointB = ms
+        abLoopEnabled = pointA != null && pointB != null
+        actionMessage = if (ms != null) "Point B set to ${formatDuration(ms)}" else "Point B cleared"
+    }
+
+    fun toggleAbLoop() {
+        if (pointA == null || pointB == null) {
+            actionMessage = "Set Point A and B to loop"
+            return
+        }
+        abLoopEnabled = !abLoopEnabled
+        actionMessage = if (abLoopEnabled) "A-B Loop ON" else "A-B Loop OFF"
+    }
+
+    fun clearAbLoop() {
+        pointA = null
+        pointB = null
+        abLoopEnabled = false
+        actionMessage = "A-B Loop Cleared"
+    }
+
+    // ── Stats for Nerds ──
+    var statsForNerdsOpen by mutableStateOf(false)
+
+    fun toggleStatsForNerds() {
+        statsForNerdsOpen = !statsForNerdsOpen
+    }
+
     var selectedSubtitleLanguage by mutableStateOf<String?>(null)
         private set
 
@@ -171,9 +220,7 @@ class PlayerState(private val scope: CoroutineScope) {
      * Portrait player frame: the video's aspect within [StageMinAspect]..[StageMaxAspect], but
      * not wider than [StageFrameAspect] (ultrawide letterboxes inside 16:9).
      */
-    val stageAspect: Float get() = if (AudioOnly.enabled) AudioStageAspect else {
-        min(videoAspect.coerceIn(StageMinAspect, StageMaxAspect), StageFrameAspect)
-    }
+    val stageAspect: Float get() = min(videoAspect.coerceIn(StageMinAspect, StageMaxAspect), StageFrameAspect)
     var firstFrameRendered by mutableStateOf(false)
         private set
     /** What the decoder is really producing, e.g. "1920×1080 · H.264 · itag 299". */
@@ -213,12 +260,136 @@ class PlayerState(private val scope: CoroutineScope) {
     /** Videos after the current one, in play order. */
     var queue by mutableStateOf<List<VideoItem>>(emptyList())
         private set
+    /** True only while the current media came from a server-generated YouTube Mix. */
+    var mixQueueActive by mutableStateOf(false)
+        private set
+    private var mixLoadJob: Job? = null
+    private var mixLoadGeneration = 0
+    private var previousItems by mutableStateOf<List<VideoItem>>(emptyList())
+    val canGoPreviousMedia: Boolean get() = previousItems.isNotEmpty()
 
     fun open(item: VideoItem, expand: Boolean = true) {
+        if (item.mixPlaylistId != null) {
+            openMix(item, expand)
+            return
+        }
+        mixLoadJob?.cancel()
+        mixLoadGeneration++
+        if (mixQueueActive) {
+            clearQueue()
+            mixQueueActive = false
+        }
+        openVideo(item, expand)
+    }
+
+    private fun openVideo(item: VideoItem, expand: Boolean) {
         if (expand) expanded = true
         if (current?.id == item.id && error == null) return
         known[item.id] = item
         show(item, startPlayback = true)
+    }
+
+    /** Loads the actual YouTube radio playlist and replaces, rather than appends to, the old mix queue. */
+    fun openMix(mix: VideoItem, expand: Boolean = true) {
+        val playlistId = mix.mixPlaylistId ?: return openVideo(mix, expand)
+        loadMix(playlistId, mix, expand)
+    }
+
+    /** Starts a Mix card directly, using its first server-provided track as the current item. */
+    fun openMix(playlistId: String, expand: Boolean = true) {
+        if (!playlistId.startsWith("RD")) return
+        loadMix(playlistId, seed = null, expand = expand)
+    }
+
+    private fun loadMix(playlistId: String, seed: VideoItem?, expand: Boolean) {
+        mixLoadJob?.cancel()
+        val generation = ++mixLoadGeneration
+        if (expand) expanded = true
+        clearQueue()
+        mixQueueActive = false
+        queue = emptyList()
+        mixLoadJob = scope.launch {
+            runCatching {
+                InnerTube.playlist(playlistId)
+            }.onSuccess { firstPage ->
+                if (generation != mixLoadGeneration) return@onSuccess
+                val items = firstPage.videos.filter { it.mixPlaylistId == null }.distinctBy { it.id }
+                    .ifEmpty { listOfNotNull(seed?.copy(mixPlaylistId = null)) }
+                if (items.isEmpty()) {
+                    actionMessage = "This Mix has no playable tracks."
+                    return@onSuccess
+                }
+                val startIndex = items.indexOfFirst { it.id == seed?.id }.takeIf { it >= 0 } ?: 0
+                val ordered = items.drop(startIndex)
+                val start = ordered.first().copy(mixPlaylistId = null)
+                openVideo(start, expand)
+                known[start.id] = start
+
+                // The playlist is fetched from YouTube, not generated from related videos.
+                // Add the remaining server order as one replacement queue for this mix.
+                var activeController: MediaController? = null
+                repeat(50) {
+                    val connected = controller
+                    if (connected != null && current?.id == start.id && connected.mediaItemCount > 0) {
+                        activeController = connected
+                    } else {
+                        delay(100)
+                    }
+                }
+                val controller = activeController
+                if (generation != mixLoadGeneration || controller == null) return@onSuccess
+                val queuedIds = HashSet<String>().apply { add(start.id) }
+                fun appendPage(videos: List<VideoItem>) {
+                    videos.forEach { video ->
+                        if (queuedIds.add(video.id)) {
+                            known[video.id] = video
+                            controller.addMediaItem(mediaItemFor(video))
+                        }
+                    }
+                    rebuildQueue()
+                    if (queue.isNotEmpty()) mixQueueActive = true
+                }
+                appendPage(ordered.drop(1))
+
+                // Start with YouTube's first batch, then keep the radio queue ahead of playback.
+                var continuation = firstPage.next
+                while (continuation != null && generation == mixLoadGeneration) {
+                    while (queue.size > 5 && generation == mixLoadGeneration) delay(500)
+                    if (generation != mixLoadGeneration) break
+                    val page = InnerTube.playlist(playlistId, continuation)
+                    if (generation != mixLoadGeneration) break
+                    appendPage(page.videos.filter { it.mixPlaylistId == null })
+                    continuation = page.next
+                }
+            }.onFailure {
+                if (generation == mixLoadGeneration) {
+                    mixQueueActive = false
+                    seed?.let { openVideo(it.copy(mixPlaylistId = null), expand) }
+                    actionMessage = "Couldn't load this Mix."
+                }
+            }
+        }
+    }
+
+    /** Opens an entire playlist of videos starting at [startIndex]. */
+    fun openPlaylist(items: List<VideoItem>, startIndex: Int = 0, expand: Boolean = true) {
+        if (items.isEmpty()) return
+        val index = startIndex.coerceIn(0, items.size - 1)
+        val start = items[index]
+        val remaining = items.drop(index + 1)
+        open(start, expand = expand)
+        scope.launch {
+            delay(150)
+            remaining.forEach { item ->
+                addToQueue(item)
+            }
+        }
+    }
+
+    /** Opens a playlist in shuffled order. */
+    fun shufflePlaylist(items: List<VideoItem>) {
+        if (items.isEmpty()) return
+        openPlaylist(items.shuffled(), startIndex = 0)
     }
 
     /**
@@ -232,25 +403,39 @@ class PlayerState(private val scope: CoroutineScope) {
         private set
 
     fun loadMoreRelated() {
-        val token = details?.relatedToken ?: return
+        val curr = details ?: return
+        val item = curr.item
         if (loadingMoreRelated) return
         loadingMoreRelated = true
         scope.launch {
-            runCatching { YouTube.nextRelated(token) }
-                .onSuccess { page ->
-                    val curr = details ?: return@onSuccess
-                    val seen = curr.related.mapTo(HashSet()) { it.id }
-                    val added = page.videos.filter { seen.add(it.id) }
-                    details = curr.copy(related = curr.related + added, relatedToken = page.next)
-                    added.forEach { known[it.id] = it }
-                }
-                .onFailure { Log.w(TAG, "Error loading more related videos", it) }
+            val token = curr.relatedToken
+            val result = if (token != null) {
+                runCatching { YouTube.nextRelated(token) }.getOrNull()
+            } else null
+
+            if (result != null && result.videos.isNotEmpty()) {
+                val seen = curr.related.mapTo(HashSet()) { it.id }
+                val added = result.videos.filter { seen.add(it.id) && it.id != item.id }
+                details = curr.copy(related = curr.related + added, relatedToken = result.next)
+                added.forEach { known[it.id] = it }
+            } else {
+                // Continuation token missing or exhausted: query search for additional related videos
+                val query = "${item.channel} ${item.title.split(" ").take(3).joinToString(" ")}"
+                runCatching { YouTube.search(query) }
+                    .onSuccess { page ->
+                        val seen = curr.related.mapTo(HashSet()) { it.id }
+                        val added = page.videos.filter { seen.add(it.id) && it.id != item.id }
+                        details = curr.copy(related = curr.related + added)
+                        added.forEach { known[it.id] = it }
+                    }
+            }
             loadingMoreRelated = false
         }
     }
 
     private fun show(item: VideoItem, startPlayback: Boolean) {
         endHoldSpeed()
+        if (startPlayback && current?.id != item.id) rememberPrevious(current)
         openedAt = android.os.SystemClock.elapsedRealtime()
         Log.i("FlashTubeTime", "open ${item.id}")
         if (startPlayback) Net.prewarmMediaConnection()
@@ -270,6 +455,11 @@ class PlayerState(private val scope: CoroutineScope) {
         speedPanelOpen = false
         videoZoom = 1f
         loadingMoreRelated = false
+        // Start the service's stream resolution as soon as the user taps.
+        // YouTube.details() also reads StreamCache, so running both now lets
+        // the two requests share its in-flight extraction instead of making
+        // the player wait for details before it even asks for a media item.
+        if (startPlayback) startPlayback(item)
         if (Account.signedIn) {
             scope.launch {
                 runCatching { InnerTube.videoState(item.id) }
@@ -279,19 +469,34 @@ class PlayerState(private val scope: CoroutineScope) {
         }
         loadJob?.cancel()
         loadJob = scope.launch {
-            runCatching { YouTube.details(item.id) }
+            runCatching { YouTube.details(item.id, includeRelated = false) }
                 .onSuccess { d ->
                     Log.i("FlashTubeTime", "details +${android.os.SystemClock.elapsedRealtime() - openedAt}ms")
                     details = d
                     // The player takes the video's shape before its first frame arrives.
                     if (!aspectFromFrames) d.aspect?.let { videoAspect = it }
-                    // Comments wait for the stream data: their request duplicates the video
-                    // page fetch and only slowed down the critical path.
-                    comments.load(item.id)
                     known[item.id] = d.item
                     d.related.forEach { known[it.id] = it }
                     if (!d.playable) error = "No playable stream was found for this video."
-                    else if (startPlayback) startPlayback(d.item)
+
+                    // PRIORITY 2: More Videos / Related Videos
+                    scope.launch {
+                        runCatching { YouTube.related(item.id) }
+                            .onSuccess { rel ->
+                                if (current?.id == item.id) {
+                                    val latest = details ?: return@onSuccess
+                                    details = latest.copy(
+                                        item = latest.item.copy(collabChannels = rel.collaborators),
+                                        related = rel.videos.ifEmpty { latest.related },
+                                        relatedToken = rel.continuation,
+                                    )
+                                    rel.videos.forEach { known[it.id] = it }
+                                }
+                            }
+
+                        // PRIORITY 3: Comments THIRD (after details & related videos arrive)
+                        comments.load(item.id, live = d.item.isLive)
+                    }
                     // Fetch real dislike count from Return YouTube Dislike in the background.
                     scope.launch(kotlinx.coroutines.Dispatchers.IO) {
                         val dislikes = fetchDislikeCount(item.id)
@@ -304,7 +509,7 @@ class PlayerState(private val scope: CoroutineScope) {
                     Log.w(TAG, "details failed for ${item.id}", it)
                     error = YouTube.friendlyError(it)
                     // Comments wait for details; without this their spinner never stopped.
-                    comments.load(item.id)
+                    comments.load(item.id, live = item.isLive)
                 }
             loading = false
         }
@@ -386,15 +591,35 @@ class PlayerState(private val scope: CoroutineScope) {
         player.play()
     }
 
+    /** Return to the last item played, including the previous track in a Mix queue. */
+    fun playPreviousMedia() {
+        val player = controller ?: return
+        val previous = previousItems.lastOrNull() ?: return
+        previousItems = previousItems.dropLast(1)
+        known[previous.id] = previous
+        replaceCurrent(player, previous, 0L)
+        show(previous, startPlayback = false)
+        player.play()
+    }
+
+    private fun rememberPrevious(item: VideoItem?) {
+        item ?: return
+        if (previousItems.lastOrNull()?.id == item.id) return
+        previousItems = (previousItems + item).takeLast(100)
+    }
+
     fun removeFromQueue(index: Int) {
         val player = controller ?: return
         player.removeMediaItem(player.currentMediaItemIndex + 1 + index)
     }
 
     fun clearQueue() {
-        val player = controller ?: return
-        val from = player.currentMediaItemIndex + 1
-        if (from < player.mediaItemCount) player.removeMediaItems(from, player.mediaItemCount)
+        controller?.let { player ->
+            val from = player.currentMediaItemIndex + 1
+            if (from < player.mediaItemCount) player.removeMediaItems(from, player.mediaItemCount)
+        }
+        queue = emptyList()
+        mixQueueActive = false
     }
 
     private fun rebuildQueue() {
@@ -447,6 +672,7 @@ class PlayerState(private val scope: CoroutineScope) {
     private fun onPlayerMovedTo(media: MediaItem) {
         val player = controller ?: return
         if (swapping || media.mediaId.isBlank()) return
+        if (media.mediaId != current?.id) rememberPrevious(current)
         // Keep the playlist as [current, ...queue]: finished items fall off the front.
         if (player.currentMediaItemIndex > 0) player.removeMediaItems(0, player.currentMediaItemIndex)
         if (media.mediaId != current?.id) show(itemFor(media), startPlayback = false)
@@ -541,20 +767,40 @@ class PlayerState(private val scope: CoroutineScope) {
         }
     }
 
+    var selectedQuality by mutableStateOf<Int?>(null)
+        private set
+
     /**
-     * Switches quality (null = Auto). The media source is rebuilt from the cached stream
-     * info at the same position, keeping play/pause as it was.
+     * Switches quality (null = Auto). Updates ExoPlayer track selection parameters and
+     * rebuilds the media source from the cached stream info at the exact position.
      */
     fun setQuality(height: Int?) {
         QualityPreference.set(height)
+        selectedQuality = height
         val player = controller ?: return
         val item = details?.item ?: current ?: return
         val position = player.currentPosition
         val playWhenReady = player.playWhenReady
+
+        // 1. Clear video size constraints so ExoPlayer accepts whatever single-resolution or adaptive stream is requested
+        try {
+            player.trackSelectionParameters = player.trackSelectionParameters
+                .buildUpon()
+                .clearVideoSizeConstraints()
+                .build()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error setting trackSelectionParameters", e)
+        }
+
+        // 2. Rebuild current media source for immediate stream resolution match
         replaceCurrent(player, item, position)
         player.playWhenReady = playWhenReady
-        val info = StreamCache.get(item.id) ?: return
-        details = details?.copy(quality = StreamSelection.pick(info).playedHeight?.let { "${it}p" })
+        val info = StreamCache.get(item.id)
+        if (info != null) {
+            val picked = StreamSelection.pick(info)
+            details = details?.copy(quality = picked.playedHeight?.let { "${it}p" })
+        }
+        actionMessage = if (height == null) "Quality: Auto" else "Quality: ${height}p"
     }
 
     /** Fresh links too: the cached ones may be exactly what YouTube refused. */
@@ -645,18 +891,15 @@ class PlayerState(private val scope: CoroutineScope) {
 
     fun toggleRememberSpeed() = PlaybackSpeed.setRemember(!PlaybackSpeed.remember, speed)
 
-    /** Audio only for the whole app: the video track goes off (or back on) right away. */
-    fun setAudioOnly(on: Boolean) {
-        AudioOnly.set(on)
-        applyVideoTrack()
-    }
-
     /**
      * App left the screen: stop fetching video and keep only audio (saves data and battery);
      * back on screen, video resumes. Done through the player's track selection, so the
      * video stream simply stops loading.
      */
     fun setBackground(background: Boolean) {
+        if (!com.thinker.flashtube.BackgroundPlayback.enabled && background) {
+            controller?.pause()
+        }
         wantBackground = background
         applyVideoTrack()
     }
@@ -669,12 +912,12 @@ class PlayerState(private val scope: CoroutineScope) {
      */
     private var wantBackground = false
 
-    /** Video is off in the background and whenever audio only is on. */
+    /** Pause video decoding while the app is backgrounded; restore it when foregrounded. */
     private fun applyVideoTrack() {
-        val off = wantBackground || AudioOnly.enabled
+        val off = wantBackground
         val player = controller ?: return
         if (player.trackSelectionParameters.disabledTrackTypes.contains(androidx.media3.common.C.TRACK_TYPE_VIDEO) == off) return
-        Log.i(TAG, if (off) "video off (${if (AudioOnly.enabled) "audio only" else "background"})" else "video on")
+        Log.i(TAG, if (off) "video off (background)" else "video on")
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, off)
             .build()
@@ -682,8 +925,11 @@ class PlayerState(private val scope: CoroutineScope) {
 
     fun close() {
         loadJob?.cancel()
+        mixLoadJob?.cancel()
+        mixLoadGeneration++
         controller?.run { stop(); clearMediaItems() }
         queue = emptyList()
+        mixQueueActive = false
         expanded = false
         fullscreen = false
         sheet = null
@@ -729,12 +975,20 @@ class PlayerState(private val scope: CoroutineScope) {
         val player = controller ?: return
         isPlaying = player.isPlaying
         // While the service refetches refused links the player sits idle; show the spinner.
-        isBuffering = player.playbackState == Player.STATE_BUFFERING || StreamRecovery.recovering == current?.id
+        isBuffering = (player.playbackState == Player.STATE_BUFFERING && !player.isPlaying) || StreamRecovery.recovering == current?.id
         positionMs = player.currentPosition.coerceAtLeast(0L)
         bufferedMs = player.bufferedPosition.coerceAtLeast(0L)
         durationMs = player.duration.takeIf { it > 0 } ?: ((current?.durationSec ?: 0L) * 1000L)
         speed = player.playbackParameters.speed
         loopEnabled = player.repeatMode == Player.REPEAT_MODE_ONE
+
+        if (abLoopEnabled) {
+            val a = pointA ?: 0L
+            val b = pointB
+            if (b != null && positionMs >= b) {
+                seekTo(a)
+            }
+        }
     }
 
     internal val listener = object : Player.Listener {
@@ -857,6 +1111,6 @@ fun rememberPlayerState(): PlayerState {
     return state
 }
 
-enum class PlayerSheet { Quality, Comments, Queue, Settings, Subtitles }
+enum class PlayerSheet { Quality, Comments, Queue, Settings, Subtitles, Description }
 
 private const val TAG = "FlashTube"

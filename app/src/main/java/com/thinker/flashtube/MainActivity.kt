@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.view.HapticFeedbackConstants
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -38,6 +39,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.zIndex
 import kotlin.math.roundToInt
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.foundation.layout.Arrangement
@@ -177,7 +179,7 @@ fun FlashTubeApp() {
         }
     }
 
-    // Off screen (app in background, screen locked): audio only.
+    // Off screen, disable video decoding while allowing normal background audio playback.
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
     DisposableEffect(lifecycle) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
@@ -196,6 +198,8 @@ fun FlashTubeApp() {
     val stackBottom = navBottom.coerceAtLeast(8.dp) +
         if (WindowInsets.tappableElement.asPaddingValues().calculateBottomPadding() > 0.dp) 10.dp else 0.dp
     var optionsFor by remember { mutableStateOf<VideoItem?>(null) }
+    var downloadFor by remember { mutableStateOf<VideoItem?>(null) }
+    var collabSheetChannels by remember { mutableStateOf<List<ChannelRef>?>(null) }
     val hasMini = player.current != null
     // Lists scroll fully clear of the floating nav (and mini-player when present).
     val contentPadding = PaddingValues(
@@ -203,11 +207,10 @@ fun FlashTubeApp() {
     )
 
     // Fullscreen is whenever the open player is shown in landscape (rotation or button).
-    val activity = LocalContext.current as ComponentActivity
+    val activity = LocalActivity.current as? ComponentActivity ?: return
     val orientation = rememberOrientationController(activity)
     val playerOpen = player.current != null && player.expanded
-    // Audio only has no picture to go fullscreen with: the open player stays portrait.
-    orientation.Bind(playerOpen && !AudioOnly.enabled)
+    orientation.Bind(playerOpen)
     val pip = remember(activity) { PipController(activity) }
     // Closing the picture-in-picture window pauses (expanding it just comes back).
     pip.Bind(onClosed = { player.controller?.pause() })
@@ -249,10 +252,10 @@ fun FlashTubeApp() {
     BoxWithConstraints(Modifier.fillMaxSize().background(c.surface)) {
         // Both ends of the morph, from the same constants the mini-player and player use.
         val stageAspect = player.stageAspect
-        val geometry = remember(constraints.maxWidth, constraints.maxHeight, stackBottom, statusTop, density, stageAspect, miniOffsetX, miniOffsetY) {
+        val geometry = remember(this@BoxWithConstraints.constraints.maxWidth, this@BoxWithConstraints.constraints.maxHeight, stackBottom, statusTop, density, stageAspect, miniOffsetX, miniOffsetY) {
             with(density) {
-                val w = constraints.maxWidth.toFloat()
-                val h = constraints.maxHeight.toFloat()
+                val w = this@BoxWithConstraints.constraints.maxWidth.toFloat()
+                val h = this@BoxWithConstraints.constraints.maxHeight.toFloat()
                 val miniBottom = h - (stackBottom + NavHeight + MiniGap).toPx()
                 val miniW = minOf(w - 32.dp.toPx(), MiniWidth.toPx())
                 val miniH = miniW * 9f / 16f
@@ -285,6 +288,7 @@ fun FlashTubeApp() {
             LocalVideoSurface provides if (pip.active) NoVideoSurface else sharedSurface,
             LocalPictureInPicture provides pip,
             LocalVideoMenu provides { optionsFor = it },
+            LocalCollaboratorsOpener provides { collabSheetChannels = it },
             LocalChannelOpener provides { url ->
                 // From the player: minimize it so the channel page is visible.
                 player.expanded = false
@@ -315,7 +319,9 @@ fun FlashTubeApp() {
                     onOpenAllSubscriptions = { openAllSubscriptions = true },
                 )
                 Tab.Library -> LibraryScreen(
-                    lib, contentPadding, onOpen = player::open, onOpenPlaylist = { openPlaylist = it },
+                    lib, contentPadding, onOpen = player::open, onOpenPlaylist = {
+                        if (it.isMix) player.openMix(it.id) else openPlaylist = it
+                    },
                     onSearch = { openSearch = true },
                     onSignIn = { signingIn = true }, onAccount = { openSettings = true },
                     scrollToTop = scrollToTop[Tab.Library] ?: 0,
@@ -355,7 +361,13 @@ fun FlashTubeApp() {
                 PlaylistScreen(
                     pl, feed, contentPadding,
                     onBack = { openPlaylist = null },
-                    onOpen = player::open,
+                    onOpen = { video ->
+                        if (pl.isMix) player.open(video.copy(mixPlaylistId = pl.id)) else player.open(video)
+                    },
+                    onOpenPlaylist = { list, idx ->
+                        if (pl.isMix) list.getOrNull(idx)?.let { player.open(it.copy(mixPlaylistId = pl.id)) }
+                        else player.openPlaylist(list, idx)
+                    },
                     channelAvatarSeed = lib.channels.associate { it.id to it.avatar },
                 )
             }
@@ -381,7 +393,16 @@ fun FlashTubeApp() {
             exit = if (reduced) fadeOut(snap()) else slideOutHorizontally(tween(300, easing = Motion.Emphasized)) { it } + fadeOut(tween(220)),
         ) {
             channelState?.let { ch ->
-                ChannelScreen(ch, contentPadding, onBack = { openChannel = null }, onOpen = player::open, onMessage = { player.actionMessage = it })
+                ChannelScreen(
+                    ch,
+                    contentPadding,
+                    onBack = { openChannel = null },
+                    onOpen = player::open,
+                    onOpenPlaylist = { playlist ->
+                        if (playlist.isMix) player.openMix(playlist.id) else openPlaylist = playlist
+                    },
+                    onMessage = { player.actionMessage = it },
+                )
             }
         }
 
@@ -423,6 +444,7 @@ fun FlashTubeApp() {
                 showVideo = !showPlayer && !showFullscreen,
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
+                    .zIndex(1000f)
                     .offset { IntOffset(miniOffsetX.roundToInt(), miniOffsetY.roundToInt()) }
                     .padding(start = 16.dp, end = 16.dp, bottom = stackBottom + NavHeight + MiniGap)
                     .widthIn(max = MiniWidth)
@@ -489,10 +511,50 @@ fun FlashTubeApp() {
             PlayerSheet.Subtitles -> SubtitlesSheet(player, onDismiss = { player.sheet = null })
             PlayerSheet.Settings -> PlayerSettingsSheet(player, onDismiss = { player.sheet = null })
             PlayerSheet.Comments -> Unit // a panel inside the player (PlayerScreen)
+            PlayerSheet.Description -> Unit // a panel inside the player (PlayerScreen)
             PlayerSheet.Queue -> QueueSheet(player, onDismiss = { player.sheet = null })
             null -> Unit
         }
-        optionsFor?.let { video -> VideoOptionsSheet(video, player, onDismiss = { optionsFor = null }) }
+        optionsFor?.let { video ->
+            VideoOptionsSheet(
+                video = video,
+                player = player,
+                onDismiss = { optionsFor = null },
+                onInterested = {
+                    scope.launch {
+                        val sent = InnerTube.sendDismissalFeedback(video.feedbackTokens["interested"])
+                        player.actionMessage = if (sent) "We'll show you more like this" else "YouTube didn't accept this feedback"
+                    }
+                },
+                onNotInterested = {
+                    lib.home.hideVideo(video.feedKey)
+                    scope.launch {
+                        val sent = InnerTube.sendDismissalFeedback(video.feedbackTokens["not_interested"])
+                        player.actionMessage = if (sent) "We'll show you fewer videos like this" else "Removed from this feed"
+                    }
+                },
+                onDownload = { downloadFor = video },
+            )
+        }
+        downloadFor?.let { video ->
+            DownloadQualitySheet(
+                video = video,
+                onDownloadStarted = { player.actionMessage = it },
+                onDismiss = { downloadFor = null },
+            )
+        }
+        collabSheetChannels?.let { channels ->
+            CollaboratorsSheet(
+                collabChannels = channels,
+                onDismiss = { collabSheetChannels = null },
+                onOpenChannel = { url ->
+                    collabSheetChannels = null
+                    player.expanded = false
+                    if (channelState?.url != url) channelState = ChannelState(url, scope)
+                    openChannel = url
+                },
+            )
+        }
         // Confirmations ("Added to queue") when the full player isn't showing its own.
         if (!showPlayer) {
             QueueMessage(player, Modifier.align(Alignment.BottomCenter).padding(bottom = stackBottom + NavHeight + (if (hasMini) MiniHeight + MiniGap else 0.dp) + 12.dp))

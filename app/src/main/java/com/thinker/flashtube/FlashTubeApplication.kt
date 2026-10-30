@@ -5,6 +5,7 @@ import android.content.Context
 import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.memory.MemoryCache
+import com.thinker.flashtube.data.ContentRegion
 import com.thinker.flashtube.potoken.PoTokenGenerator
 import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.services.youtube.extractors.YoutubeStreamExtractor
@@ -29,11 +30,12 @@ class FlashTubeApplication : Application(), ImageLoaderFactory {
         // The iOS client only adds HLS livestream formats; Flashtube plays VOD, so skip that request.
         YoutubeStreamExtractor.setFetchIosClient(false)
         ThemeSettings.init(this)
-        RegionSettings.init(this)
+        ContentRegion.init(this)
         QualityPreference.init(this)
         PlaybackSpeed.init(this)
-        AudioOnly.init(this)
         AmbientMode.init(this)
+        SeekConfig.init(this)
+        BackgroundPlayback.init(this)
         ResumeStore.init(this)
         Account.init(this)
         SponsorBlock.init(this)

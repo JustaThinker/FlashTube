@@ -8,6 +8,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
+import java.util.UUID
 
 /**
  * Posting comments and replies (signed in). Comments are *read* by [CommentFeed]; posting
@@ -20,6 +21,24 @@ import java.io.IOException
  * Pages are walked lazily and cached per video until a reply target is found.
  */
 object CommentPosting {
+    /** Send a live-chat message with YouTube's latest opaque input params. */
+    suspend fun liveMessage(params: String, text: String): Comment? = withContext(Dispatchers.IO) {
+        val body = JSONObject()
+            .put("params", params)
+            .put("richMessage", JSONObject().put("textSegments", JSONArray().put(JSONObject().put("text", text))))
+            .put("clientMessageId", UUID.randomUUID().toString())
+        val response = InnerTube.post("live_chat/send_message", body)
+        val page = CommentFeed.livePage(response)
+        page.comments.firstOrNull()?.let { return@withContext it }
+        val errors = mutableListOf<String>()
+        response.walk { key, obj ->
+            if (key == "errorMessage") obj.text("errorMessage")?.takeIf { it.isNotBlank() }?.let(errors::add)
+        }
+        if (errors.isNotEmpty()) throw IOException(errors.first())
+        // YouTube may accept the message without echoing its renderer.
+        null
+    }
+
     private class VideoParams(
         var createComment: String? = null,
         val reply: MutableMap<String, String> = HashMap(),
