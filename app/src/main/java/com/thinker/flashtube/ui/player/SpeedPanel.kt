@@ -112,7 +112,7 @@ fun SpeedButton(state: PlayerState) {
             .background(bg, ModeButtonShape),
         contentAlignment = Alignment.Center,
     ) {
-        if (normal) PlayerDrawableIcon(R.drawable.ic_player_speed, "Playback speed", ink, Modifier.size(18.dp))
+        if (normal) PlayerDrawableIcon(R.drawable.ic_player_speed, "Playback speed", ink, Modifier.size(21.dp))
         else Text(PlaybackSpeed.label(state.speed) + "×", color = ink, fontSize = 12.5.sp, fontWeight = FontWeight.Black)
     }
 }

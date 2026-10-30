@@ -828,7 +828,7 @@ private fun AccountActions(state: PlayerState) {
                 R.drawable.ic_player_save,
                 "Save to Watch later",
                 if (state.inWatchLater) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
-                Modifier.size(18.dp),
+                Modifier.size(23.dp),
             )
         },
     ) {
@@ -914,19 +914,19 @@ private fun ActionPill(
 
 /** Brief confirmation or failure note for account actions; clears itself. */
 @Composable
-private fun ActionMessage(state: PlayerState, modifier: Modifier) {
+fun ActionMessage(state: PlayerState, modifier: Modifier = Modifier) {
     val message = state.actionMessage ?: return
     LaunchedEffect(message) {
-        kotlinx.coroutines.delay(2_500)
+        kotlinx.coroutines.delay(2_200)
         state.actionMessage = null
     }
     val c = MaterialTheme.colorScheme
     Box(
         modifier
             .clip(CircleShape)
-            .background(c.inverseSurface)
-            .padding(horizontal = 18.dp, vertical = 11.dp),
-    ) { Text(message, color = c.inverseOnSurface, fontWeight = FontWeight.Bold, fontSize = 13.sp) }
+            .background(c.inverseSurface.copy(alpha = 0.92f))
+            .padding(horizontal = 14.dp, vertical = 7.dp),
+    ) { Text(message, color = c.inverseOnSurface, fontWeight = FontWeight.SemiBold, fontSize = 12.sp) }
 }
 
 // ── Mini player ────────────────────────────────────────────────────────────────
@@ -1011,9 +1011,7 @@ fun MiniPlayer(state: PlayerState, onExpand: () -> Unit, modifier: Modifier = Mo
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .padding(start = 6.dp, top = 6.dp)
-                        .size(28.dp)
-                        .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.65f))
+                        .size(40.dp)
                         .pressable(onClick = {
                             touched()
                             state.togglePlay()
@@ -1031,7 +1029,7 @@ fun MiniPlayer(state: PlayerState, onExpand: () -> Unit, modifier: Modifier = Mo
                             if (state.isPlaying) R.drawable.ic_player_pause else R.drawable.ic_player_play,
                             if (state.isPlaying) "Pause" else "Play",
                             Color.White,
-                            Modifier.size(16.dp),
+                            Modifier.size(35.dp),
                         )
                     }
                 }
@@ -1041,9 +1039,7 @@ fun MiniPlayer(state: PlayerState, onExpand: () -> Unit, modifier: Modifier = Mo
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(end = 6.dp, top = 6.dp)
-                        .size(28.dp)
-                        .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.65f))
+                        .size(32.dp)
                         .pressable(onClick = {
                             touched()
                             state.close()
@@ -1054,7 +1050,7 @@ fun MiniPlayer(state: PlayerState, onExpand: () -> Unit, modifier: Modifier = Mo
                         imageVector = Icons.Rounded.Close,
                         contentDescription = "Close player",
                         tint = Color.White,
-                        modifier = Modifier.size(16.dp),
+                        modifier = Modifier.size(18.dp),
                     )
                 }
             }

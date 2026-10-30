@@ -569,7 +569,7 @@ fun VideoContent(
 
                     // Picture-in-picture
                     if (pip?.supported == true) {
-                        GlassButton(null, "Picture-in-picture", enabled, drawableRes = R.drawable.ic_player_floating, size = 32.dp, iconSize = 18.dp) {
+                        GlassButton(null, "Picture-in-picture", enabled, drawableRes = R.drawable.ic_player_floating, size = 40.dp, iconSize = 30.dp) {
                             controlsVisible = false
                             if (!pip.enter(state.videoAspect)) state.actionMessage = "Picture-in-picture is turned off for FlashTube in Settings."
                         }
@@ -577,7 +577,7 @@ fun VideoContent(
                     }
 
                     // Settings (Gear) icon - opens playback settings list (Morphe/YouTube style)
-                    GlassButton(null, "Playback settings", enabled, drawableRes = R.drawable.ic_player_settings, size = 32.dp, iconSize = 18.dp) {
+                    GlassButton(null, "Playback settings", enabled, drawableRes = R.drawable.ic_player_settings, size = 40.dp, iconSize = 30.dp) {
                         touched()
                         state.sheet = PlayerSheet.Settings
                     }
@@ -668,8 +668,7 @@ fun VideoContent(
                             enabled,
                             drawableRes = if (fullscreen) R.drawable.ic_player_fullscreen_exit else R.drawable.ic_player_fullscreen,
                             size = 34.dp,
-                            iconSize = 22.dp,
-                            tinted = false,
+                            iconSize = 28.dp,
                         ) { onToggleFullscreen() }
                     }
                 }
@@ -765,6 +764,23 @@ fun VideoContent(
                     )
                 }
             }
+        }
+
+        // Action popup overlay for likes, quality changes, account actions, etc.
+        ActionMessage(
+            state = state,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = if (fullscreen) 64.dp else 40.dp),
+        )
+
+        // Bottom sheets triggered from video controls / playback settings
+        when (state.sheet) {
+            PlayerSheet.Quality -> QualitySheet(state, onDismiss = { state.sheet = null })
+            PlayerSheet.Settings -> PlayerSettingsSheet(state, onDismiss = { state.sheet = null })
+            PlayerSheet.Queue -> QueueSheet(player = state, onDismiss = { state.sheet = null })
+            PlayerSheet.Subtitles -> SubtitlesSheet(player = state, onDismiss = { state.sheet = null })
+            else -> {}
         }
     }
 }
@@ -1412,7 +1428,7 @@ private fun CompactPlayerNavRow(
             .padding(horizontal = 20.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (drawableRes != null) PlayerDrawableIcon(drawableRes, null, c.onSurface, Modifier.size(22.dp))
+        if (drawableRes != null) PlayerDrawableIcon(drawableRes, null, c.onSurface, Modifier.size(32.dp))
         else icon?.let { Icon(it, null, tint = c.onSurface, modifier = Modifier.size(22.dp)) }
         Spacer(Modifier.width(16.dp))
         Text(
@@ -1498,15 +1514,12 @@ private fun GlassButton(
     drawableRes: Int? = null,
     size: Dp = 38.dp,
     iconSize: Dp = 22.dp,
-    tinted: Boolean = true,
     onClick: () -> Unit,
 ) {
     Box(
         modifier = modifier
             .size(size)
-            .pressable(enabled = enabled, onClick = onClick)
-            .clip(CircleShape)
-            .background(if (tinted) Color.Black.copy(alpha = 0.38f) else Color.Black.copy(alpha = 0f)),
+            .pressable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         if (drawableRes != null) PlayerDrawableIcon(drawableRes, description, Color.White, Modifier.size(iconSize))
@@ -1633,7 +1646,7 @@ fun MorphPlayButton(
         if (buffering) {
             CircularProgressIndicator(color = content, strokeWidth = 3.dp, modifier = Modifier.size(size * 0.42f))
         } else {
-            PlayerPlayPauseGlyph(playing = playing, color = content, size = 33.dp)
+            PlayerPlayPauseGlyph(playing = playing, color = content, size = 63.dp)
         }
     }
 }

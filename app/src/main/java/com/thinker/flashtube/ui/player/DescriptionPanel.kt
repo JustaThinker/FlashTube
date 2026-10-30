@@ -520,7 +520,7 @@ fun DescriptionPanel(
                             contentAlignment = Alignment.Center,
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(painterResource(R.drawable.ic_player_play), contentDescription = null, tint = c.onSurface, modifier = Modifier.size(16.dp))
+                                Icon(painterResource(R.drawable.ic_player_play), contentDescription = null, tint = c.onSurface, modifier = Modifier.size(21.dp))
                                 Spacer(Modifier.width(6.dp))
                                 Text("Videos", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = c.onSurface)
                             }

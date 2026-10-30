@@ -229,7 +229,7 @@ fun SearchScreen(
                             .padding(start = 12.dp, end = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Icon(painterResource(R.drawable.ic_player_search), null, tint = c.onSurfaceVariant, modifier = Modifier.size(18.dp))
+                        Icon(painterResource(R.drawable.ic_player_search), null, tint = c.onSurfaceVariant, modifier = Modifier.size(23.dp))
                         Spacer(Modifier.width(8.dp))
                         Box(Modifier.weight(1f)) {
                             if (state.query.isEmpty()) {
@@ -344,7 +344,7 @@ fun SearchScreen(
                                                 .padding(horizontal = 16.dp, vertical = 10.dp),
                                             verticalAlignment = Alignment.CenterVertically,
                                         ) {
-                                            Icon(painterResource(R.drawable.ic_player_search), null, tint = c.onSurfaceVariant, modifier = Modifier.size(20.dp))
+                                            Icon(painterResource(R.drawable.ic_player_search), null, tint = c.onSurfaceVariant, modifier = Modifier.size(24.dp))
                                             Spacer(Modifier.width(16.dp))
                                             Text(
                                                 suggestion,

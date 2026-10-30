@@ -382,7 +382,7 @@ fun CommentsCard(state: CommentsState, onOpen: () -> Unit) {
                 painter = painterResource(R.drawable.ic_player_comments),
                 contentDescription = null,
                 tint = c.onSurface,
-                modifier = Modifier.size(16.dp),
+                modifier = Modifier.size(21.dp),
             )
             Spacer(Modifier.width(6.dp))
             Text(if (state.isLive) "Live chat" else "Comments", fontWeight = FontWeight.Bold, fontSize = 13.sp)
@@ -549,6 +549,13 @@ fun CommentsPanel(
                     Modifier.padding(start = 16.dp, end = 12.dp, bottom = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_player_comments),
+                        contentDescription = null,
+                        tint = c.onSurface,
+                        modifier = Modifier.size(24.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
                     Text(if (state.isLive) "Live chat" else "Comments", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                     if (state.isLive && state.liveViewerCount != null) {
                         Spacer(Modifier.width(8.dp))

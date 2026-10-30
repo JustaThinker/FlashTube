@@ -648,7 +648,6 @@ class PlayerState(private val scope: CoroutineScope) {
         val next = relList.firstOrNull { it.channel.equals(curr.channel, ignoreCase = true) }
             ?: relList.firstOrNull()
         if (next != null) {
-            actionMessage = "Up next: ${next.title}"
             open(next, expand = expanded)
         } else {
             scope.launch {
@@ -658,7 +657,6 @@ class PlayerState(private val scope: CoroutineScope) {
                         val rel = list.firstOrNull { it.channel.equals(curr.channel, ignoreCase = true) }
                             ?: list.firstOrNull()
                         if (rel != null) {
-                            actionMessage = "Up next: ${rel.title}"
                             open(rel, expand = expanded)
                         }
                     }

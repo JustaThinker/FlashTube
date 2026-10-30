@@ -28,7 +28,7 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.AccountCircle
-import androidx.compose.material.icons.rounded.Search
+import androidx.compose.ui.res.painterResource
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -155,10 +155,10 @@ fun HeaderActions(onSearch: () -> Unit, onAccount: () -> Unit) {
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                imageVector = Icons.Rounded.Search,
+                painter = painterResource(R.drawable.ic_player_search),
                 contentDescription = "Search",
                 tint = c.onSurface,
-                modifier = Modifier.size(27.dp),
+                modifier = Modifier.size(33.dp),
             )
         }
         AccountAction(onAccount)
