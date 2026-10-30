@@ -72,14 +72,17 @@ object InnerTubeStoryboardParser {
     fun parseSpec(specString: String): StoryboardSpec? {
         if (specString.isBlank()) return null
         return runCatching {
-            val parts = specString.split("#")
+            val levels = specString.split("|")
+            val targetLevel = levels.getOrNull(1) ?: levels.firstOrNull() ?: specString
+            val parts = targetLevel.split("#")
             if (parts.size < 6) return null
             val baseUrl = parts[0]
-            val width = parts[1].toIntOrNull() ?: 80
-            val height = parts[2].toIntOrNull() ?: 45
+            val width = parts[1].toIntOrNull() ?: 160
+            val height = parts[2].toIntOrNull() ?: 90
             val totalFrames = parts[3].toIntOrNull() ?: 100
-            val cols = parts[4].toIntOrNull() ?: 10
-            val rows = parts[5].toIntOrNull() ?: 10
+            val cols = parts[4].toIntOrNull() ?: 5
+            val rows = parts[5].toIntOrNull() ?: 5
+            val durationPerFrame = parts.getOrNull(6)?.toLongOrNull() ?: 2000L
             val framesPerPage = cols * rows
             val pageCount = if (framesPerPage > 0) (totalFrames + framesPerPage - 1) / framesPerPage else 1
 
@@ -93,7 +96,7 @@ object InnerTubeStoryboardParser {
                 framesPerPageX = cols,
                 framesPerPageY = rows,
                 totalFrames = totalFrames,
-                durationPerFrameMs = 2000L,
+                durationPerFrameMs = durationPerFrame,
                 urls = urls,
             )
         }.getOrNull()
@@ -107,7 +110,7 @@ object InnerTubeStoryboardParser {
 object VideoSkimmer {
     private const val TAG = "VideoSkimmer"
     private const val MAX_SPRITE_CACHE_BYTES = 20 * 1024 * 1024 // 20 MB memory cache
-    private const val MAX_FRAME_CACHE_ENTRIES = 50
+    private const val MAX_FRAME_CACHE_ENTRIES = 100
 
     private val framesetMap = ConcurrentHashMap<String, Frameset>()
     private val specMap = ConcurrentHashMap<String, StoryboardSpec>()
@@ -123,7 +126,19 @@ object VideoSkimmer {
     /** Preload storyboards for a video in background */
     suspend fun preload(videoId: String) {
         withContext(Dispatchers.IO) {
-            resolveFrameset(videoId)
+            val set = resolveFrameset(videoId)
+            if (set != null && set.urls.isNotEmpty()) {
+                set.urls.take(2).forEach { url ->
+                    getOrFetchSprite(url)
+                }
+                return@withContext
+            }
+            val spec = specMap[videoId]
+            if (spec != null && spec.urls.isNotEmpty()) {
+                spec.urls.take(2).forEach { url ->
+                    getOrFetchSprite(url)
+                }
+            }
         }
     }
 
@@ -153,12 +168,14 @@ object VideoSkimmer {
         videoId: String,
         positionMs: Long,
     ): Bitmap? = withContext(Dispatchers.IO) {
-        val cacheKey = "$videoId:${positionMs / 1000}"
-        frameCache.get(cacheKey)?.let { return@withContext it }
-
         // Try resolving via NewPipe Frameset first
         val set = resolveFrameset(videoId)
         if (set != null) {
+            val intervalMs = max(1L, set.durationPerFrame.toLong())
+            val frameIndex = positionMs / intervalMs
+            val cacheKey = "$videoId:${set.frameWidth}x${set.frameHeight}:$frameIndex"
+            frameCache.get(cacheKey)?.let { return@withContext it }
+
             val bitmap = extractFrameFromFrameset(set, positionMs)
             if (bitmap != null) {
                 frameCache.put(cacheKey, bitmap)
@@ -169,6 +186,11 @@ object VideoSkimmer {
         // Try InnerTube parsed StoryboardSpec fallback
         val spec = specMap[videoId]
         if (spec != null) {
+            val intervalMs = max(1L, spec.durationPerFrameMs)
+            val frameIndex = positionMs / intervalMs
+            val cacheKey = "$videoId:${spec.frameWidth}x${spec.frameHeight}:$frameIndex"
+            frameCache.get(cacheKey)?.let { return@withContext it }
+
             val bitmap = extractFrameFromSpec(spec, positionMs)
             if (bitmap != null) {
                 frameCache.put(cacheKey, bitmap)
@@ -202,13 +224,13 @@ object VideoSkimmer {
 
         val left = bounds[1].coerceIn(0, max(0, sprite.width - 1))
         val top = bounds[2].coerceIn(0, max(0, sprite.height - 1))
-        val right = bounds[3].coerceIn(left + 1, sprite.width)
-        val bottom = bounds[4].coerceIn(top + 1, sprite.height)
+        val maxW = max(1, sprite.width - left)
+        val maxH = max(1, sprite.height - top)
+        val requestedW = bounds[3] - bounds[1]
+        val requestedH = bounds[4] - bounds[2]
+        val width = min(requestedW, set.frameWidth).coerceIn(1, maxW)
+        val height = min(requestedH, set.frameHeight).coerceIn(1, maxH)
 
-        val width = min(right - left, set.frameWidth)
-        val height = min(bottom - top, set.frameHeight)
-
-        if (width <= 0 || height <= 0) return null
         return runCatching { Bitmap.createBitmap(sprite, left, top, width, height) }.getOrNull()
     }
 
@@ -225,15 +247,13 @@ object VideoSkimmer {
         val pageUrl = spec.urls.getOrNull(pageIndex) ?: return null
         val sprite = getOrFetchSprite(pageUrl) ?: return null
 
-        val left = col * spec.frameWidth
-        val top = row * spec.frameHeight
-        val right = min(left + spec.frameWidth, sprite.width)
-        val bottom = min(top + spec.frameHeight, sprite.height)
+        val left = (col * spec.frameWidth).coerceIn(0, max(0, sprite.width - 1))
+        val top = (row * spec.frameHeight).coerceIn(0, max(0, sprite.height - 1))
+        val maxW = max(1, sprite.width - left)
+        val maxH = max(1, sprite.height - top)
+        val width = min(spec.frameWidth, maxW)
+        val height = min(spec.frameHeight, maxH)
 
-        val width = right - left
-        val height = bottom - top
-
-        if (width <= 0 || height <= 0) return null
         return runCatching { Bitmap.createBitmap(sprite, left, top, width, height) }.getOrNull()
     }
 
@@ -277,7 +297,10 @@ fun SkimmerPreviewCard(
 
     LaunchedEffect(videoId, positionMs, visible) {
         if (visible && videoId != null) {
-            frameBitmap = VideoSkimmer.getFrameBitmap(videoId, positionMs)
+            val bitmap = VideoSkimmer.getFrameBitmap(videoId, positionMs)
+            if (bitmap != null) {
+                frameBitmap = bitmap
+            }
         } else if (!visible) {
             frameBitmap = null
         }
@@ -296,7 +319,7 @@ fun SkimmerPreviewCard(
                 modifier = Modifier
                     .shadow(12.dp, shape = RoundedCornerShape(12.dp))
                     .background(Color.Black.copy(alpha = 0.85f), shape = RoundedCornerShape(12.dp))
-                    .border(1.dp, Color.White.copy(alpha = 0.2f), shape = RoundedCornerShape(12.dp))
+                    .border(1.dp, Color.White.copy(alpha = 0.25f), shape = RoundedCornerShape(12.dp))
                     .padding(4.dp),
             ) {
                 Box(
@@ -341,7 +364,10 @@ fun SkimmerFullOverlay(
 
     LaunchedEffect(videoId, positionMs, visible) {
         if (visible && videoId != null) {
-            frameBitmap = VideoSkimmer.getFrameBitmap(videoId, positionMs)
+            val bitmap = VideoSkimmer.getFrameBitmap(videoId, positionMs)
+            if (bitmap != null) {
+                frameBitmap = bitmap
+            }
         } else if (!visible) {
             frameBitmap = null
         }
@@ -364,3 +390,4 @@ fun SkimmerFullOverlay(
         }
     }
 }
+

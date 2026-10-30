@@ -771,7 +771,8 @@ fun VideoContent(
             state = state,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = if (fullscreen) 64.dp else 40.dp),
+                .padding(bottom = if (fullscreen) 64.dp else 40.dp)
+                .zIndex(100f),
         )
 
         // Bottom sheets triggered from video controls / playback settings

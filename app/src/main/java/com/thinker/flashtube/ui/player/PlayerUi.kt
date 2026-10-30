@@ -923,6 +923,7 @@ fun ActionMessage(state: PlayerState, modifier: Modifier = Modifier) {
     val c = MaterialTheme.colorScheme
     Box(
         modifier
+            .zIndex(100f)
             .clip(CircleShape)
             .background(c.inverseSurface.copy(alpha = 0.92f))
             .padding(horizontal = 14.dp, vertical = 7.dp),

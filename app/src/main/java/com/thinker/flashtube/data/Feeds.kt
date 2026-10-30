@@ -176,8 +176,10 @@ private object HomeChipCache {
         FlashTubeApplication.appContext.getSharedPreferences("home_chip_cache_prefs", Context.MODE_PRIVATE)
     }
 
+    private fun cacheKey(identity: String) = "v2:$identity"
+
     fun load(identity: String): List<FeedChip> = runCatching {
-        val raw = prefs.getString(identity, null) ?: return emptyList()
+        val raw = prefs.getString(cacheKey(identity), null) ?: return emptyList()
         val array = org.json.JSONArray(raw)
         List(array.length()) { index ->
             val item = array.getJSONObject(index)
@@ -187,6 +189,7 @@ private object HomeChipCache {
                 params = item.optString("params").ifBlank { null },
                 navigationEndpoint = item.optJSONObject("navigationEndpoint"),
                 key = item.optString("key").ifBlank { item.getString("title") },
+                continuation = item.optString("continuation").ifBlank { null },
             )
         }
     }.getOrDefault(emptyList())
@@ -201,9 +204,10 @@ private object HomeChipCache {
                     .put("browseId", chip.browseId ?: "")
                     .put("params", chip.params ?: "")
                     .put("navigationEndpoint", chip.navigationEndpoint)
+                    .put("continuation", chip.continuation ?: "")
                     .put("key", chip.key))
             }
-            prefs.edit().putString(identity, array.toString()).apply()
+            prefs.edit().putString(cacheKey(identity), array.toString()).apply()
         }
     }
 }
@@ -212,11 +216,7 @@ private object HomeChipCache {
 @Stable
 class FeedState(
     private val scope: CoroutineScope,
-    /**
-     * Home: every refresh should bring different suggestions, as in the YouTube app. The
-     * signed-in web feed returns much the same first page each time, so a refresh reads
-     * on into the recommendation stream and keeps only videos not yet shown this session.
-     */
+    /** Home feed states keep the YouTube server's ordering on refresh. */
     private val freshOnRefresh: Boolean = false,
     private val loader: suspend (next: String?) -> FeedPage,
 ) {
@@ -241,8 +241,6 @@ class FeedState(
     private var next: String? = null
     private var loaded = false
     private var lastLoadIdentity: Any? = null
-    /** Ids already put in front of the user across sessions (fresh-refresh feeds only). */
-    private val shown = if (freshOnRefresh) SeenStore.load() else HashSet()
     private var job: Job? = null
     private var chipJob: Job? = null
     private var chipRequestAttempted = false
@@ -286,6 +284,9 @@ class FeedState(
                 if (cached.isNotEmpty()) {
                     videos = cached
                     loaded = true
+                    // Render the saved feed immediately, then sync it with YouTube like the
+                    // official app does when it opens with cached content.
+                    refresh()
                     return
                 }
             }
@@ -300,8 +301,10 @@ class FeedState(
             chips = HomeChipCache.load(cacheIdentity)
             chipRequestAttempted = false
         }
-        if (!freshOnRefresh || loading || chipsLoading || chipRequestAttempted) return
-        chipRequestAttempted = true
+        // The first video request can fall back to the public trending feed, which has no
+        // category metadata. Fetch the Home browse response independently in that case; don't
+        // let the video request's loading state suppress the only request that can supply chips.
+        if (!freshOnRefresh || chipsLoading || chipRequestAttempted) return
         chipsLoading = true
         chipJob = scope.launch {
             runCatching { loader(null) }
@@ -309,6 +312,7 @@ class FeedState(
                     if (page.chips.isNotEmpty()) {
                         chips = page.chips
                         HomeChipCache.save(cacheIdentity, page.chips)
+                        chipRequestAttempted = true
                     }
                 }
             chipsLoading = false
@@ -325,19 +329,14 @@ class FeedState(
         chipsLoading = false
         job?.cancel()
         job = scope.launch {
-            // A selected server chip must show that exact topic feed; don't filter it through
-            // the Home recommendation de-duplication window.
-            runCatching {
-                if (freshOnRefresh && selectedChip == null && shown.isNotEmpty()) loadFresh()
-                else loader(null)
-            }
+            runCatching { loader(null) }
                 .onSuccess {
                     videos = it.videos; next = it.next; generation++
                     if (it.chips.isNotEmpty()) {
                         chips = it.chips
                         chipCacheIdentity?.let { identity -> HomeChipCache.save(identity, it.chips) }
                     }
-                    chipRequestAttempted = true
+                    if (it.chips.isNotEmpty()) chipRequestAttempted = true
                     if (freshOnRefresh) {
                         val ids = it.videos.mapNotNull { v ->
                             when {
@@ -346,14 +345,12 @@ class FeedState(
                                 else -> v.id
                             }
                         }
-                        shown += ids
                         SeenStore.addAll(ids)
                         HomeFeedCache.save(it.videos)
                     }
                 }
                 .onFailure {
                     error = friendly(it)
-                    chipRequestAttempted = true
                 }
             loading = false
             refreshing = false
@@ -383,7 +380,6 @@ class FeedState(
                                 else -> v.id
                             }
                         }
-                        shown += ids
                         SeenStore.addAll(ids)
                     }
                     next = page.next
@@ -395,43 +391,12 @@ class FeedState(
         }
     }
 
-    /**
-     * Unseen videos only: reads up to [FRESH_PAGES] pages into the feed until there are
-     * [FRESH_TARGET]. If YouTube has nothing new at all, falls back to the plain first page.
-     */
-    private suspend fun loadFresh(): FeedPage {
-        val first = loader(null)
-        val fresh = LinkedHashMap<String, VideoItem>()
-        var token = first.next
-        first.videos.filter { it.feedKey !in shown && it.id !in shown }.forEach { fresh[it.feedKey] = it }
-        var pages = 1
-        while (fresh.size < FRESH_TARGET && token != null && pages < FRESH_PAGES) {
-            val page = loader(token)
-            page.videos.filter { it.feedKey !in shown && it.id !in shown }.forEach { fresh.putIfAbsent(it.feedKey, it) }
-            token = page.next
-            pages++
-        }
-        if (fresh.isEmpty()) return first
-        return FeedPage(fresh.values.toList(), token, chips = first.chips)
-    }
-
-
-
     fun reset() {
         job?.cancel()
-        if (freshOnRefresh) {
-            shown.clear()
-            shown += SeenStore.load()
-        }
         videos = emptyList(); next = null; loaded = false; loading = false; error = null
         chips = emptyList(); chipsLoading = false; chipRequestAttempted = false; chipCacheIdentity = null; selectedChip = null
         chipJob?.cancel(); chipJob = null
         lastLoadIdentity = null
-    }
-
-    private companion object {
-        const val FRESH_TARGET = 30
-        const val FRESH_PAGES = 10
     }
 
     private fun friendly(t: Throwable) = when (t) {
@@ -649,36 +614,42 @@ fun FeedList(
             if (onLoadMore != null) onLoadMore() else feed.loadMore()
         }
     }
-    PullToRefresh(enabled = pullToRefresh, refreshing = feed.refreshing, onRefresh = onRefresh ?: feed::refresh, topPadding = indicatorTop) {
+    PullToRefresh(enabled = pullToRefresh, refreshing = feed.refreshing, onRefresh = onRefresh ?: { feed.refresh() }, topPadding = indicatorTop) {
     LazyColumn(state = list, contentPadding = contentPadding) {
         header()
-        items(listVideos, key = { it.feedKey }) { video ->
-            if (video.feedPost != null) {
-                CommunityPostCard(video.feedPost)
-            } else if (video.mixPlaylistId != null) {
-                MixCard(video, onClick = { onOpen(video) })
-            } else if (useCompactRows) {
-                Box(Modifier.padding(horizontal = 16.dp, vertical = 2.dp)) {
-                    VideoRow(video, onClick = { onOpen(video) })
+        if (listVideos.isEmpty()) {
+            when {
+                feed.error != null -> item {
+                    EmptyState(
+                        icon = Icons.Rounded.CloudOff,
+                        title = "Couldn't load this",
+                        body = feed.error.orEmpty(),
+                        action = { PillButton("Try again", { feed.refresh() }) },
+                    )
                 }
-            } else {
-                VideoCard(video, onClick = { onOpen(video) })
+                feed.loading || isLoadingMore || feed.refreshing -> items(4) {
+                    FeedSkeletonCard()
+                }
             }
-        }
-        when {
-            // No keys on these trailing items: a keyed loader at index 0 makes LazyColumn
-            // hold it in view when videos arrive above it, landing at the bottom of the page.
-            feed.error != null && listVideos.isEmpty() -> item {
-                EmptyState(
-                    icon = Icons.Rounded.CloudOff,
-                    title = "Couldn't load this",
-                    body = feed.error.orEmpty(),
-                    action = { PillButton("Try again", { feed.refresh() }) },
-                )
+        } else {
+            items(listVideos, key = { it.feedKey }) { video ->
+                if (video.feedPost != null) {
+                    CommunityPostCard(video.feedPost)
+                } else if (video.mixPlaylistId != null) {
+                    MixCard(video, onClick = { onOpen(video) })
+                } else if (useCompactRows) {
+                    Box(Modifier.padding(horizontal = 16.dp, vertical = 2.dp)) {
+                        VideoRow(video, onClick = { onOpen(video) })
+                    }
+                } else {
+                    VideoCard(video, onClick = { onOpen(video) })
+                }
             }
-            isLoadingMore || feed.loading || (onLoadMore != null && hasMore) || (onLoadMore == null && feed.hasMore) -> item {
-                Box(Modifier.fillMaxWidth().padding(28.dp), Alignment.Center) {
-                    CircularProgressIndicator(color = c.primary, strokeWidth = 4.dp, modifier = Modifier.size(32.dp))
+            if (isLoadingMore || feed.loading || (onLoadMore != null && hasMore) || (onLoadMore == null && feed.hasMore)) {
+                item {
+                    Box(Modifier.fillMaxWidth().padding(28.dp), Alignment.Center) {
+                        CircularProgressIndicator(color = c.primary, strokeWidth = 4.dp, modifier = Modifier.size(32.dp))
+                    }
                 }
             }
         }
@@ -688,7 +659,7 @@ fun FeedList(
 
 /** YouTube-style loading placeholder for the first page, before any feed rows exist. */
 @Composable
-private fun FeedSkeletonCard() {
+fun FeedSkeletonCard() {
     val c = MaterialTheme.colorScheme
     val transition = rememberInfiniteTransition(label = "feed-skeleton")
     val sweep by transition.animateFloat(

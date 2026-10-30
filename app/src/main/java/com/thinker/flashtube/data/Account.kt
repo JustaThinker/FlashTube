@@ -48,7 +48,9 @@ data class FeedChip(
     val browseId: String?,
     val params: String?,
     val navigationEndpoint: JSONObject? = null,
-    val key: String = listOfNotNull(browseId, params, title).joinToString("|")
+    val key: String = listOfNotNull(browseId, params, title).joinToString("|"),
+    /** YouTube Home category chips currently route through continuationCommand. */
+    val continuation: String? = null,
 )
 
 @Immutable
@@ -490,13 +492,23 @@ object InnerTube {
             android.util.Log.d("HomeChipSync", "Requesting Home feed; signedIn=${Account.signedIn}")
         }
         if (Account.signedIn || chip != null) {
-            val body = if (next != null) JSONObject().put("continuation", next) else {
-                chip?.navigationEndpoint?.let { JSONObject().put("navigationEndpoint", it) }
-                    ?: JSONObject().put("browseId", chip?.browseId ?: "FEwhat_to_watch").apply {
-                        chip?.params?.takeIf { it.isNotBlank() }?.let { put("params", it) }
-                    }
+            val continuation = next ?: chip?.continuation
+            if (continuation != null) {
+                parseFeed(postAny("browse", JSONObject().put("continuation", continuation)))
+            } else {
+                val routeBody = JSONObject().put("browseId", chip?.browseId ?: "FEwhat_to_watch").apply {
+                    chip?.params?.takeIf { it.isNotBlank() }?.let { put("params", it) }
+                }
+                val response = try {
+                    postAny("browse", routeBody)
+                } catch (e: IOException) {
+                    // YouTube has returned chip commands that only work in their original
+                    // navigationEndpoint envelope. Retry that server-provided form on a 400.
+                    if (chip?.navigationEndpoint == null || !e.message.orEmpty().contains("returned 400")) throw e
+                    postAny("browse", JSONObject().put("navigationEndpoint", chip.navigationEndpoint))
+                }
+                parseFeed(response)
             }
-            parseFeed(postAny("browse", body))
         } else {
             val serverFeed = runCatching {
                 // Anonymous sessions still receive YouTube's own home feed and its category
@@ -869,11 +881,14 @@ object InnerTube {
                         ?.substringBefore(". Selected")?.trim().orEmpty()
                     var browseId: String? = null
                     var params: String? = null
+                    var continuation: String? = null
                     val navigationEndpoint = obj.optJSONObject("navigationEndpoint")
                     navigationEndpoint?.walk { endpointKey, endpoint ->
                         if (endpointKey == "browseEndpoint") {
                             if (browseId == null) browseId = endpoint.optString("browseId").takeIf { it.isNotBlank() }
                             if (params == null) params = endpoint.optString("params").takeIf { it.isNotBlank() }
+                        } else if (endpointKey == "continuationCommand" && continuation == null) {
+                            continuation = endpoint.optString("token").takeIf { it.isNotBlank() }
                         }
                     }
                     if (BuildConfig.DEBUG) {
@@ -881,15 +896,16 @@ object InnerTube {
                         android.util.Log.d("HomeChipSync", "chip '$title' route=${endpoint?.toString()?.take(240)}")
                     }
                     // The selected default "All" chip can omit its navigation endpoint.
-                    if (title.isNotBlank() && (navigationEndpoint != null || browseId != null || params != null || title.equals("All", true))) {
+                    if (title.isNotBlank() && (navigationEndpoint != null || browseId != null || params != null || continuation != null || title.equals("All", true))) {
                         if (title.equals("All", true) && browseId == null && params == null) browseId = "FEwhat_to_watch"
-                        val routeKey = navigationEndpoint?.toString() ?: listOfNotNull(browseId, params, title).joinToString("|")
+                        val routeKey = continuation ?: navigationEndpoint?.toString() ?: listOfNotNull(browseId, params, title).joinToString("|")
                         val chip = FeedChip(
                             title = title,
                             browseId = browseId,
                             params = params,
                             navigationEndpoint = navigationEndpoint,
                             key = routeKey,
+                            continuation = continuation,
                         )
                         chips.putIfAbsent(chip.key, chip)
                     }

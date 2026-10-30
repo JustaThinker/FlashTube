@@ -182,7 +182,7 @@ fun HomeScreen(
                             },
                         )
                     }
-                } else if (lib.home.loading || lib.home.chipsLoading || lib.home.chips.isEmpty()) {
+                } else if (lib.home.loading || lib.home.chipsLoading || lib.home.videos.isEmpty()) {
                     item(key = "loading_category_chips") {
                         CategoryChipSkeleton()
                     }
