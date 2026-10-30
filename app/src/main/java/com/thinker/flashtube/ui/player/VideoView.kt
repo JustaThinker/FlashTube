@@ -766,14 +766,16 @@ fun VideoContent(
             }
         }
 
-        // Action popup overlay for likes, quality changes, account actions, etc.
-        ActionMessage(
-            state = state,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = if (fullscreen) 64.dp else 40.dp)
-                .zIndex(100f),
-        )
+        // Fullscreen action popup overlay for likes, quality changes, account actions, etc.
+        if (fullscreen) {
+            ActionMessage(
+                state = state,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 32.dp)
+                    .zIndex(100f),
+            )
+        }
 
         // Bottom sheets triggered from video controls / playback settings
         when (state.sheet) {

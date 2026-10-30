@@ -456,6 +456,15 @@ fun PlayerScreen(
                 onClose = { state.sheet = null },
             )
         }
+
+        // Action popup pill at bottom center of the device screen
+        ActionMessage(
+            state = state,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = bottom + 28.dp)
+                .zIndex(100f),
+        )
     }
 }
 

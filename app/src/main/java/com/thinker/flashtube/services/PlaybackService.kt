@@ -41,8 +41,11 @@ import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
+import com.thinker.flashtube.data.VideoPlaybackCache
 import org.schabi.newpipe.extractor.services.youtube.dashmanifestcreators.YoutubeProgressiveDashManifestCreator
+import org.schabi.newpipe.extractor.stream.AudioStream
 import org.schabi.newpipe.extractor.stream.Stream
+import org.schabi.newpipe.extractor.stream.VideoStream
 import java.io.ByteArrayInputStream
 import java.util.concurrent.Executors
 
@@ -88,7 +91,10 @@ class PlaybackService : MediaSessionService() {
             // halves what must download before the first frame.
             .setLoadControl(
                 DefaultLoadControl.Builder()
-                    .setBufferDurationsMs(15_000, 50_000, 1_000, 2_000)
+                    .setBufferDurationsMs(10_000, 120_000, 1_000, 800)
+                    .setTargetBufferBytes(96 * 1024 * 1024)
+                    .setBackBuffer(45_000, true)
+                    .setPrioritizeTimeOverSizeThresholds(false)
                     .build(),
             )
             .setAudioAttributes(
@@ -149,8 +155,8 @@ class PlaybackService : MediaSessionService() {
 
     /**
      * Controllers send items carrying only a video ID (Media3 strips URIs crossing the
-     * controller boundary). Resolve stream metadata on this worker before Media3 asks the
-     * source factory to build a source; source construction itself must remain cache-only.
+     * controller boundary). Each one is resolved here into a playable item; the actual
+     * streams come from [StreamCache] in [YouTubeMediaSourceFactory].
      */
     private inner class SessionCallback : MediaSession.Callback {
         override fun onAddMediaItems(
@@ -159,11 +165,16 @@ class PlaybackService : MediaSessionService() {
             mediaItems: MutableList<MediaItem>,
         ): ListenableFuture<MutableList<MediaItem>> = resolver.submit<MutableList<MediaItem>> {
             mediaItems.map { item ->
+                val resolutionStartedAt = android.os.SystemClock.elapsedRealtime()
                 val ladder = runCatching {
                     kotlinx.coroutines.runBlocking {
                         com.thinker.flashtube.data.VideoStreamResolver.resolve(item.mediaId)
                     }
                 }.getOrNull()
+                Log.i(
+                    "FlashTubeTime",
+                    "session stream resolution for ${item.mediaId}: ${android.os.SystemClock.elapsedRealtime() - resolutionStartedAt}ms (success=${ladder != null})",
+                )
                 val title = item.mediaMetadata.title ?: ladder?.title
                 item.buildUpon()
                     .setUri(YouTube.watchUrl(item.mediaId))
@@ -457,6 +468,10 @@ private class YouTubeMediaSourceFactory(private val context: Context) : MediaSou
         context,
         Net.streamDataSourceFactory
     )
+    // Initialize the disk cache lazily on ExoPlayer's loader thread.
+    private val cachedStreamDataSourceFactory = DataSource.Factory {
+        VideoPlaybackCache.dataSourceFactory(context).createDataSource()
+    }
     private val fallback = DefaultMediaSourceFactory(dataSourceFactory)
 
     override fun setDrmSessionManagerProvider(provider: DrmSessionManagerProvider): MediaSource.Factory =
@@ -476,10 +491,17 @@ private class YouTubeMediaSourceFactory(private val context: Context) : MediaSou
             return ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(localMediaItem)
         }
 
-        // SessionCallback resolves the ladder on a worker before this factory runs. Never
-        // perform network extraction here: Media3 may request a source on its app thread.
-        val ladder = com.thinker.flashtube.data.VideoStreamResolutionCache
-            .getIfFresh(mediaItem.mediaId)
+        // Fast VISIONOS stream ladder resolution (~150ms)
+        val resolutionStartedAt = android.os.SystemClock.elapsedRealtime()
+        val ladder = runCatching {
+            kotlinx.coroutines.runBlocking {
+                com.thinker.flashtube.data.VideoStreamResolver.resolve(mediaItem.mediaId)
+            }
+        }.getOrNull()
+        Log.i(
+            "FlashTubeTime",
+            "media source stream resolution for ${mediaItem.mediaId}: ${android.os.SystemClock.elapsedRealtime() - resolutionStartedAt}ms (success=${ladder != null})",
+        )
 
         if (ladder != null) {
             val targetHeight = QualityPreference.getEffectiveTargetHeight(context)
@@ -499,15 +521,21 @@ private class YouTubeMediaSourceFactory(private val context: Context) : MediaSou
 
             if (picked.video != null && picked.audio != null) {
                 Log.i("FlashTube", "media source ${mediaItem.mediaId}: playing VISIONOS video (${picked.video.height}p) + audio (${picked.audio.bitrate} bps)")
-                val videoSource = ProgressiveMediaSource.Factory(dataSourceFactory)
-                    .createMediaSource(mediaItem.buildUpon().setUri(Uri.parse(picked.video.url)).build())
-                val audioSource = ProgressiveMediaSource.Factory(dataSourceFactory)
-                    .createMediaSource(mediaItem.buildUpon().setUri(Uri.parse(picked.audio.url)).build())
+                val videoSource = cachedProgressiveSource(
+                    mediaItem, picked.video.url, "video",
+                    "${picked.video.height}p-${picked.video.fps}-${picked.video.mimeType}",
+                )
+                val audioSource = cachedProgressiveSource(
+                    mediaItem, picked.audio.url, "audio",
+                    "${picked.audio.bitrate}-${picked.audio.mimeType}",
+                )
                 return MergingMediaSource(true, true, videoSource, audioSource)
             } else if (picked.video != null) {
                 Log.i("FlashTube", "media source ${mediaItem.mediaId}: playing VISIONOS video (${picked.video.height}p)")
-                return ProgressiveMediaSource.Factory(dataSourceFactory)
-                    .createMediaSource(mediaItem.buildUpon().setUri(Uri.parse(picked.video.url)).build())
+                return cachedProgressiveSource(
+                    mediaItem, picked.video.url, "video",
+                    "${picked.video.height}p-${picked.video.fps}-${picked.video.mimeType}",
+                )
             }
         }
 
@@ -587,7 +615,27 @@ private class YouTubeMediaSourceFactory(private val context: Context) : MediaSou
             if (dash != null) return dash
         }
         // Manifest generation failed: plain progressive still plays, just less efficiently.
-        return ProgressiveMediaSource.Factory(dataSourceFactory)
-            .createMediaSource(mediaItem.buildUpon().setUri(url).build())
+        val role = if (stream is AudioStream) "audio" else "video"
+        val fallbackVariant = when (stream) {
+            is VideoStream -> "${stream.height}p-${stream.fps}-${stream.format?.mimeType.orEmpty()}"
+            is AudioStream -> "${stream.averageBitrate}-${stream.format?.mimeType.orEmpty()}"
+            else -> stream.format?.mimeType.orEmpty()
+        }
+        return cachedProgressiveSource(mediaItem, url, role, "itag-${itag?.id ?: fallbackVariant}")
+    }
+
+    private fun cachedProgressiveSource(
+        mediaItem: MediaItem,
+        url: String,
+        role: String,
+        fallbackVariant: String,
+    ): MediaSource {
+        val cacheKey = VideoPlaybackCache.cacheKey(mediaItem.mediaId, role, url, fallbackVariant)
+        val cachedItem = mediaItem.buildUpon()
+            .setUri(Uri.parse(url))
+            .setCustomCacheKey(cacheKey)
+            .build()
+        return ProgressiveMediaSource.Factory(cachedStreamDataSourceFactory)
+            .createMediaSource(cachedItem)
     }
 }
