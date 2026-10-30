@@ -102,10 +102,11 @@ fun SettingsScreen(
 ) {
     val c = MaterialTheme.colorScheme
     var currentSection by rememberSaveable { mutableStateOf<SettingsSection?>(null) }
+    var showAccountsPage by rememberSaveable { mutableStateOf(false) }
 
     // Intercept back key when inside a sub-category page to return to main settings list
-    BackHandler(enabled = currentSection != null) {
-        currentSection = null
+    BackHandler(enabled = currentSection != null || showAccountsPage) {
+        if (showAccountsPage) showAccountsPage = false else currentSection = null
     }
 
     Box(
@@ -114,9 +115,9 @@ fun SettingsScreen(
             .background(c.surface),
     ) {
         AnimatedContent(
-            targetState = currentSection,
+            targetState = currentSection to showAccountsPage,
             transitionSpec = {
-                if (targetState != null) {
+                if (targetState.second || targetState.first != null) {
                     // Navigate deeper: slide in from right
                     (slideInHorizontally(tween(260, easing = Motion.Emphasized)) { it / 3 } + fadeIn(tween(200)))
                         .togetherWith(slideOutHorizontally(tween(200)) { -it / 3 } + fadeOut(tween(160)))
@@ -127,37 +128,45 @@ fun SettingsScreen(
                 }
             },
             label = "settings_navigation",
-        ) { section ->
-            when (section) {
-                null -> SettingsMainList(
+        ) { (section, accountsPage) ->
+            when {
+                accountsPage -> AccountsPage(
+                    onBack = { showAccountsPage = false },
+                    onSignIn = onSignIn,
+                    onSignedOut = {
+                        showAccountsPage = false
+                        onSignedOut()
+                    },
+                )
+                section == null -> SettingsMainList(
                     onBack = onBack,
                     onOpenSection = { currentSection = it },
+                    onOpenAccounts = { showAccountsPage = true },
                     onSignIn = onSignIn,
-                    onSignedOut = onSignedOut,
                     contentPadding = contentPadding,
                 )
-                SettingsSection.Appearance -> AppearancePage(
+                section == SettingsSection.Appearance -> AppearancePage(
                     onBack = { currentSection = null },
                     contentPadding = contentPadding,
                 )
-                SettingsSection.ContentRegion -> ContentRegionPage(
+                section == SettingsSection.ContentRegion -> ContentRegionPage(
                     onBack = { currentSection = null },
                     contentPadding = contentPadding,
                 )
-                SettingsSection.Playback -> PlaybackPage(
+                section == SettingsSection.Playback -> PlaybackPage(
                     onBack = { currentSection = null },
                     onOpenContentRegion = { currentSection = SettingsSection.ContentRegion },
                     contentPadding = contentPadding,
                 )
-                SettingsSection.SponsorBlock -> SponsorBlockPage(
+                section == SettingsSection.SponsorBlock -> SponsorBlockPage(
                     onBack = { currentSection = null },
                     contentPadding = contentPadding,
                 )
-                SettingsSection.DataStorage -> DataStoragePage(
+                section == SettingsSection.DataStorage -> DataStoragePage(
                     onBack = { currentSection = null },
                     contentPadding = contentPadding,
                 )
-                SettingsSection.About -> AboutPage(
+                section == SettingsSection.About -> AboutPage(
                     onBack = { currentSection = null },
                     contentPadding = contentPadding,
                 )
@@ -172,8 +181,8 @@ fun SettingsScreen(
 private fun SettingsMainList(
     onBack: () -> Unit,
     onOpenSection: (SettingsSection) -> Unit,
+    onOpenAccounts: () -> Unit,
     onSignIn: () -> Unit,
-    onSignedOut: () -> Unit,
     contentPadding: PaddingValues,
 ) {
     val c = MaterialTheme.colorScheme
@@ -203,11 +212,8 @@ private fun SettingsMainList(
             SonicSpaceSectionTitle("Account")
             SettingsProfileCard(
                 profile = profile,
+                onOpenAccounts = onOpenAccounts,
                 onSignIn = onSignIn,
-                onSignOut = {
-                    Account.signOut()
-                    onSignedOut()
-                },
             )
 
             Spacer(Modifier.height(16.dp))
@@ -1343,10 +1349,163 @@ private fun AboutPage(
 // ── Shared UI Components ───────────────────────────────────────────────────────
 
 @Composable
+private fun AccountsPage(
+    onBack: () -> Unit,
+    onSignIn: () -> Unit,
+    onSignedOut: () -> Unit,
+) {
+    val c = MaterialTheme.colorScheme
+    val accounts = Account.accounts
+    val activeProfile = Account.profile
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        BackScreenHeader(onBack = onBack) {
+            Text(
+                text = "Accounts",
+                fontFamily = RoundedHeavy,
+                fontWeight = FontWeight.Bold,
+                fontSize = 22.sp,
+                letterSpacing = (-0.5).sp,
+            )
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp),
+        ) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "Select an account to switch profiles.",
+                fontSize = 13.sp,
+                color = c.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 16.dp),
+            )
+
+            SonicSpaceSectionTitle("Saved Accounts")
+            SonicSpaceGroupCard {
+                accounts.forEachIndexed { index, account ->
+                    val isActive = account.profile == activeProfile
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .pressable { Account.switchAccount(account) }
+                            .padding(vertical = 12.dp, horizontal = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        ChannelAvatar(account.profile.avatar, account.profile.name, size = 44)
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                text = account.profile.name,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 14.5.sp,
+                                color = c.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = account.profile.handle ?: if (isActive) "Current account" else "YouTube account",
+                                fontSize = 12.sp,
+                                color = c.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        if (isActive) {
+                            Icon(
+                                imageVector = Icons.Rounded.Check,
+                                contentDescription = "Current account",
+                                tint = c.primary,
+                                modifier = Modifier.padding(horizontal = 8.dp).size(20.dp),
+                            )
+                        }
+                        Icon(
+                            imageVector = Icons.Rounded.Close,
+                            contentDescription = "Remove ${account.profile.name}",
+                            tint = c.onSurfaceVariant.copy(alpha = 0.7f),
+                            modifier = Modifier
+                                .size(36.dp)
+                                .pressable {
+                                    Account.removeAccount(account.id)
+                                    if (Account.profile == null) onSignedOut()
+                                }
+                                .padding(9.dp),
+                        )
+                    }
+                    if (index < accounts.lastIndex) {
+                        HorizontalDivider(
+                            color = c.onSurface.copy(alpha = 0.06f),
+                            modifier = Modifier.padding(horizontal = 12.dp),
+                        )
+                    }
+                }
+
+                HorizontalDivider(
+                    color = c.onSurface.copy(alpha = 0.06f),
+                    modifier = Modifier.padding(horizontal = 12.dp),
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .pressable(onClick = onSignIn)
+                        .padding(vertical = 14.dp, horizontal = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Add,
+                        contentDescription = null,
+                        tint = c.primary,
+                        modifier = Modifier.padding(start = 8.dp, end = 12.dp).size(22.dp),
+                    )
+                    Text(
+                        text = "Add another account",
+                        color = c.primary,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 14.sp,
+                    )
+                }
+            }
+
+            if (activeProfile != null) {
+                Spacer(Modifier.height(18.dp))
+                SonicSpaceGroupCard {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .pressable {
+                                Account.signOut()
+                                if (Account.profile == null) onSignedOut()
+                            }
+                            .padding(vertical = 16.dp, horizontal = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "Sign out of current account",
+                            color = c.error,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 14.sp,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                            contentDescription = null,
+                            tint = c.onSurfaceVariant.copy(alpha = 0.65f),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun SettingsProfileCard(
     profile: Profile?,
+    onOpenAccounts: () -> Unit,
     onSignIn: () -> Unit,
-    onSignOut: () -> Unit,
 ) {
     val c = MaterialTheme.colorScheme
     val isLoggedIn = profile != null
@@ -1496,14 +1655,14 @@ private fun SettingsProfileCard(
                 }
             }
 
-            // Keep saved accounts collapsed until the account chevron is opened.
+            // Keep switching compact on Settings; the Accounts page contains management actions.
             if (isLoggedIn && expanded) {
                 Spacer(Modifier.height(14.dp))
                 HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f))
                 Spacer(Modifier.height(12.dp))
 
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    accounts.forEach { acc ->
+                    accounts.take(2).forEach { acc ->
                         val isActive = acc.profile == profile
                         Row(
                             modifier = Modifier
@@ -1522,48 +1681,19 @@ private fun SettingsProfileCard(
                             }
                             if (isActive) {
                                 Icon(Icons.Rounded.Check, contentDescription = "Active", tint = c.primary, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(8.dp))
                             }
-                            Icon(
-                                Icons.Rounded.Close,
-                                contentDescription = "Remove account",
-                                tint = c.onSurfaceVariant.copy(alpha = 0.6f),
-                                modifier = Modifier
-                                    .size(24.dp)
-                                    .pressable { Account.removeAccount(acc.id) }
-                                    .padding(4.dp),
-                            )
                         }
                     }
 
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .pressable(onClick = onSignIn)
+                            .pressable(onClick = onOpenAccounts)
                             .padding(horizontal = 10.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(28.dp)
-                                .clip(CircleShape)
-                                .background(c.primary.copy(alpha = 0.15f)),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(Icons.Rounded.Add, contentDescription = null, tint = c.primary, modifier = Modifier.size(18.dp))
-                        }
-                        Spacer(Modifier.width(10.dp))
-                        Text("Add another account", color = c.primary, fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
-                    }
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .pressable(onClick = onSignOut)
-                            .padding(horizontal = 10.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text("Sign out", color = c.error, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp)
+                        Text("${accounts.size} accounts · All accounts", color = c.onSurface, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp, modifier = Modifier.weight(1f))
+                        Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, contentDescription = "Open accounts", tint = c.onSurfaceVariant)
                     }
                 }
             }

@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="730" viewBox="0 0 1080 730" fill="none">
+  <defs>
+    <style>
+      .bg{fill:#f5f6f8}.panel{fill:#fff;stroke:#e4e7ec;stroke-width:1.5}.tile{fill:#f7f8fa}.ink{color:#15171b;fill:#15171b;stroke:#15171b;stroke-linecap:round;stroke-linejoin:round}.heading{fill:#15171b;font:650 24px Inter,Arial,sans-serif}.name{fill:#20232a;font:600 17px Inter,Arial,sans-serif}.desc{fill:#737987;font:13px Inter,Arial,sans-serif}.glyph{stroke-width:1.8}
+    </style>
+    <symbol id="a-prev" viewBox="0 0 48 48"><path d="M12.5 15v18" stroke="currentColor" stroke-width="2.4"/><path d="m36 14-18 10 18 10V14Z" fill="currentColor"/></symbol>
+    <symbol id="a-play" viewBox="0 0 48 48"><path d="m17 12 19 12-19 12V12Z" fill="currentColor"/></symbol>
+    <symbol id="a-pause" viewBox="0 0 48 48"><rect x="14" y="14" width="6" height="20" rx="1.6" fill="currentColor"/><rect x="28" y="14" width="6" height="20" rx="1.6" fill="currentColor"/></symbol>
+    <symbol id="a-next" viewBox="0 0 48 48"><path d="M35.5 15v18" stroke="currentColor" stroke-width="2.4"/><path d="m12 14 18 10-18 10V14Z" fill="currentColor"/></symbol>
+
+    <symbol id="b-prev" viewBox="0 0 48 48"><path d="M11 14v20" stroke="currentColor" stroke-width="2.5"/><path d="m35 14-13 10 13 10V14Zm-13 0L9 24l13 10V14Z" fill="currentColor"/></symbol>
+    <symbol id="b-play" viewBox="0 0 48 48"><path d="m16 11 21 13-21 13V11Z" fill="currentColor"/></symbol>
+    <symbol id="b-pause" viewBox="0 0 48 48"><rect x="13" y="13" width="7" height="22" rx="2" fill="currentColor"/><rect x="28" y="13" width="7" height="22" rx="2" fill="currentColor"/></symbol>
+    <symbol id="b-next" viewBox="0 0 48 48"><path d="M37 14v20" stroke="currentColor" stroke-width="2.5"/><path d="m13 14 13 10-13 10V14Zm13 0 13 10-13 10V14Z" fill="currentColor"/></symbol>
+
+    <symbol id="c-prev" viewBox="0 0 48 48"><path d="M12 14v20" stroke="currentColor" stroke-width="2.2"/><path d="m34 14-17 10 17 10V14Z" fill="currentColor"/><path d="M8 14v20" stroke="currentColor" stroke-width="2.2" opacity=".35"/></symbol>
+    <symbol id="c-play" viewBox="0 0 48 48"><path d="m18 13 18 11-18 11V13Z" fill="currentColor"/><path d="m13 17v14" stroke="currentColor" stroke-width="2.2" opacity=".35"/></symbol>
+    <symbol id="c-pause" viewBox="0 0 48 48"><rect x="15" y="14" width="5.5" height="20" rx="2.2" fill="currentColor"/><rect x="27.5" y="14" width="5.5" height="20" rx="2.2" fill="currentColor"/><path d="M11 18v12m26-12v12" stroke="currentColor" stroke-width="2.2" opacity=".35"/></symbol>
+    <symbol id="c-next" viewBox="0 0 48 48"><path d="M36 14v20" stroke="currentColor" stroke-width="2.2"/><path d="m14 14 17 10-17 10V14Z" fill="currentColor"/><path d="M40 14v20" stroke="currentColor" stroke-width="2.2" opacity=".35"/></symbol>
+  </defs>
+  <rect class="bg" width="1080" height="730" rx="28"/>
+  <text x="38" y="52" class="heading">Player controls · icon directions</text>
+  <text x="38" y="78" class="desc">Based on your navbar icon language: simple geometry, filled transport, one consistent canvas.</text>
+
+  <g transform="translate(30 105)">
+    <rect class="panel" width="1020" height="180" rx="20"/>
+    <text x="24" y="36" class="name">A · Navbar-matched</text><text x="24" y="58" class="desc">Thin skip stem · generous play inset · smaller pause</text>
+    <g transform="translate(370 72)">
+      <rect class="tile" width="128" height="88" rx="18"/><use href="#a-prev" x="40" y="20" width="48" height="48" class="ink"/>
+      <g transform="translate(145)"><rect class="tile" width="128" height="88" rx="18"/><use href="#a-play" x="40" y="20" width="48" height="48" class="ink"/></g>
+      <g transform="translate(290)"><rect class="tile" width="128" height="88" rx="18"/><use href="#a-pause" x="40" y="20" width="48" height="48" class="ink"/></g>
+      <g transform="translate(435)"><rect class="tile" width="128" height="88" rx="18"/><use href="#a-next" x="40" y="20" width="48" height="48" class="ink"/></g>
+    </g>
+  </g>
+  <g transform="translate(30 305)">
+    <rect class="panel" width="1020" height="180" rx="20"/>
+    <text x="24" y="36" class="name">B · Bold filled</text><text x="24" y="58" class="desc">Heavier skip pair · slightly larger play · broad, rounded pause bars</text>
+    <g transform="translate(370 72)">
+      <rect class="tile" width="128" height="88" rx="18"/><use href="#b-prev" x="40" y="20" width="48" height="48" class="ink"/>
+      <g transform="translate(145)"><rect class="tile" width="128" height="88" rx="18"/><use href="#b-play" x="40" y="20" width="48" height="48" class="ink"/></g>
+      <g transform="translate(290)"><rect class="tile" width="128" height="88" rx="18"/><use href="#b-pause" x="40" y="20" width="48" height="48" class="ink"/></g>
+      <g transform="translate(435)"><rect class="tile" width="128" height="88" rx="18"/><use href="#b-next" x="40" y="20" width="48" height="48" class="ink"/></g>
+    </g>
+  </g>
+  <g transform="translate(30 505)">
+    <rect class="panel" width="1020" height="180" rx="20"/>
+    <text x="24" y="36" class="name">C · Soft-stem</text><text x="24" y="58" class="desc">Filled arrows with a subtle slim outer stem accent; pause stays compact</text>
+    <g transform="translate(370 72)">
+      <rect class="tile" width="128" height="88" rx="18"/><use href="#c-prev" x="40" y="20" width="48" height="48" class="ink"/>
+      <g transform="translate(145)"><rect class="tile" width="128" height="88" rx="18"/><use href="#c-play" x="40" y="20" width="48" height="48" class="ink"/></g>
+      <g transform="translate(290)"><rect class="tile" width="128" height="88" rx="18"/><use href="#c-pause" x="40" y="20" width="48" height="48" class="ink"/></g>
+      <g transform="translate(435)"><rect class="tile" width="128" height="88" rx="18"/><use href="#c-next" x="40" y="20" width="48" height="48" class="ink"/></g>
+    </g>
+  </g>
+  <text x="500" y="713" text-anchor="middle" class="desc">Previous · Play · Pause · Next — each glyph sits in an equal 48 × 48 viewBox</text>
+</svg>

@@ -26,6 +26,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp as lerpColor
 import androidx.compose.ui.graphics.luminance
@@ -377,6 +378,13 @@ fun CommentsCard(state: CommentsState, onOpen: () -> Unit) {
             .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                painter = painterResource(R.drawable.ic_player_comments),
+                contentDescription = null,
+                tint = c.onSurface,
+                modifier = Modifier.size(16.dp),
+            )
+            Spacer(Modifier.width(6.dp))
             Text(if (state.isLive) "Live chat" else "Comments", fontWeight = FontWeight.Bold, fontSize = 13.sp)
             if (state.isLive && state.liveViewerCount != null) {
                 Spacer(Modifier.width(6.dp))

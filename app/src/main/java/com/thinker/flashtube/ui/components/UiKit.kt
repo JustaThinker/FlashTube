@@ -61,6 +61,7 @@ import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -826,10 +827,11 @@ fun ResumeBar(videoId: String, modifier: Modifier = Modifier) {
 
 @Composable
 fun EmptyState(
-    icon: ImageVector,
+    icon: ImageVector?,
     title: String,
     body: String = "",
     modifier: Modifier = Modifier,
+    iconRes: Int? = null,
     action: (@Composable () -> Unit)? = null,
 ) {
     val c = MaterialTheme.colorScheme
@@ -841,7 +843,11 @@ fun EmptyState(
             modifier = Modifier.size(72.dp).clip(SunnyShape).background(c.primaryContainer),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(icon, contentDescription = null, tint = c.onPrimaryContainer, modifier = Modifier.size(32.dp))
+            if (iconRes != null) {
+                Icon(painterResource(iconRes), contentDescription = null, tint = c.onPrimaryContainer, modifier = Modifier.size(32.dp))
+            } else {
+                icon?.let { Icon(it, contentDescription = null, tint = c.onPrimaryContainer, modifier = Modifier.size(32.dp)) }
+            }
         }
         Spacer(Modifier.height(18.dp))
         Text(title, fontFamily = RoundedHeavy, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, textAlign = TextAlign.Center)

@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="440" height="1500" viewBox="0 0 440 1500">
+  <defs>
+    <style>
+      text { font-family: Inter, Arial, sans-serif; }
+      .bg { fill: #101114; }
+      .muted { fill: #a5a7b0; }
+      .white { fill: #f5f5f7; }
+      .accent { fill: #ff4668; }
+      .card { fill: #1b1c21; stroke: #303138; stroke-width: 1; }
+      .row { fill: #23242a; }
+      .small { font-size: 12px; }
+      .label { font-size: 11px; font-weight: 700; letter-spacing: 1.4px; }
+      .title { font-size: 16px; font-weight: 700; }
+      .name { font-size: 15px; font-weight: 700; }
+      .handle { font-size: 12px; }
+    </style>
+  </defs>
+  <rect class="bg" width="440" height="1500"/>
+  <text x="28" y="48" class="white" font-size="24" font-weight="800">Account card concepts</text>
+  <text x="28" y="72" class="muted" font-size="13">Three layout directions · multi-account expanded</text>
+
+  <!-- Concept 1 -->
+  <text x="28" y="119" class="accent label">01  ·  COMPACT DROPDOWN</text>
+  <rect x="20" y="136" width="400" height="300" rx="22" class="card"/>
+  <circle cx="62" cy="183" r="23" fill="#6244a1"/>
+  <text x="62" y="188" text-anchor="middle" class="white" font-size="14" font-weight="700">A</text>
+  <text x="98" y="179" class="name white">Alex Morgan</text>
+  <text x="98" y="200" class="handle muted">@alexmorgan</text>
+  <text x="384" y="189" text-anchor="middle" class="muted" font-size="22">⌄</text>
+  <line x1="40" y1="222" x2="400" y2="222" stroke="#34353c"/>
+  <rect x="34" y="235" width="372" height="55" rx="14" class="row"/>
+  <circle cx="61" cy="262" r="17" fill="#287f76"/>
+  <text x="61" y="267" text-anchor="middle" class="white" font-size="12" font-weight="700">J</text>
+  <text x="89" y="258" class="white" font-size="13" font-weight="700">Jamie Lee</text>
+  <text x="89" y="276" class="muted small">@jamielee</text>
+  <text x="380" y="268" text-anchor="middle" class="accent" font-size="12" font-weight="700">ACTIVE</text>
+  <circle cx="61" cy="318" r="17" fill="#9b6339"/>
+  <text x="61" y="323" text-anchor="middle" class="white" font-size="12" font-weight="700">S</text>
+  <text x="89" y="314" class="white" font-size="13" font-weight="700">Sam Rivera</text>
+  <text x="89" y="332" class="muted small">@samrivera</text>
+  <text x="382" y="323" text-anchor="middle" class="muted" font-size="18">×</text>
+  <line x1="40" y1="348" x2="400" y2="348" stroke="#34353c"/>
+  <text x="48" y="378" class="accent" font-size="13" font-weight="700">+  Add another account</text>
+  <text x="28" y="420" class="muted small">One clean profile row; account choices appear only after ⌄.</text>
+
+  <!-- Concept 2 -->
+  <text x="28" y="479" class="accent label">02  ·  CURRENT ACCOUNT FIRST</text>
+  <rect x="20" y="496" width="400" height="345" rx="22" class="card"/>
+  <text x="42" y="527" class="muted label">SIGNED IN AS</text>
+  <circle cx="65" cy="574" r="23" fill="#6244a1"/>
+  <text x="65" y="579" text-anchor="middle" class="white" font-size="14" font-weight="700">A</text>
+  <text x="101" y="570" class="name white">Alex Morgan</text>
+  <text x="101" y="591" class="handle muted">@alexmorgan</text>
+  <text x="384" y="579" text-anchor="middle" class="muted" font-size="22">⌄</text>
+  <rect x="40" y="615" width="360" height="38" rx="12" fill="#292a31"/>
+  <text x="58" y="639" class="white small">2 accounts</text>
+  <text x="381" y="640" text-anchor="middle" class="accent small" font-weight="700">OPEN</text>
+  <line x1="40" y1="669" x2="400" y2="669" stroke="#34353c"/>
+  <rect x="36" y="681" width="368" height="54" rx="13" fill="#302a3d"/>
+  <circle cx="64" cy="708" r="17" fill="#6244a1"/>
+  <text x="64" y="713" text-anchor="middle" class="white" font-size="12" font-weight="700">A</text>
+  <text x="92" y="704" class="white" font-size="13" font-weight="700">Alex Morgan</text>
+  <text x="92" y="722" class="muted small">@alexmorgan</text>
+  <text x="380" y="714" text-anchor="middle" class="accent" font-size="17" font-weight="700">✓</text>
+  <circle cx="64" cy="760" r="17" fill="#287f76"/>
+  <text x="64" y="765" text-anchor="middle" class="white" font-size="12" font-weight="700">J</text>
+  <text x="92" y="756" class="white" font-size="13" font-weight="700">Jamie Lee</text>
+  <text x="92" y="774" class="muted small">@jamielee</text>
+  <text x="380" y="765" text-anchor="middle" class="muted" font-size="18">×</text>
+  <text x="50" y="811" class="accent" font-size="13" font-weight="700">+  Add another account</text>
+  <text x="28" y="825" class="muted small">Clear active-account label; switcher is visibly contained.</text>
+
+  <!-- Concept 3 -->
+  <text x="28" y="882" class="accent label">03  ·  ACCOUNT STACK</text>
+  <rect x="20" y="899" width="400" height="380" rx="22" class="card"/>
+  <text x="42" y="931" class="white title">YouTube account</text>
+  <text x="42" y="952" class="muted small">Choose which profile to use</text>
+  <rect x="38" y="969" width="364" height="62" rx="15" fill="#302a3d" stroke="#7349a0"/>
+  <circle cx="69" cy="1000" r="20" fill="#6244a1"/>
+  <text x="69" y="1005" text-anchor="middle" class="white" font-size="13" font-weight="700">A</text>
+  <text x="101" y="996" class="white" font-size="13" font-weight="700">Alex Morgan</text>
+  <text x="101" y="1015" class="muted small">@alexmorgan</text>
+  <text x="375" y="1006" text-anchor="middle" class="accent" font-size="17" font-weight="700">✓</text>
+  <rect x="38" y="1040" width="364" height="62" rx="15" class="row"/>
+  <circle cx="69" cy="1071" r="20" fill="#287f76"/>
+  <text x="69" y="1076" text-anchor="middle" class="white" font-size="13" font-weight="700">J</text>
+  <text x="101" y="1067" class="white" font-size="13" font-weight="700">Jamie Lee</text>
+  <text x="101" y="1086" class="muted small">@jamielee</text>
+  <text x="375" y="1077" text-anchor="middle" class="muted" font-size="18">×</text>
+  <rect x="38" y="1112" width="364" height="48" rx="14" fill="#ff4668"/>
+  <text x="220" y="1142" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">+  Add another account</text>
+  <text x="42" y="1191" class="muted small">Sign out</text>
+  <text x="28" y="1263" class="muted small">More explicit account management; takes the most vertical space.</text>
+
+  <text x="28" y="1360" class="white" font-size="14" font-weight="700">All concepts</text>
+  <text x="28" y="1386" class="muted small">Use initials as stand-ins for existing account photos.</text>
+  <text x="28" y="1407" class="muted small">No app icons are redrawn or changed in these previews.</text>
+</svg>

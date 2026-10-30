@@ -79,6 +79,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.thinker.flashtube.R
+import com.thinker.flashtube.ui.player.components.PlayerDrawableIcon
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -110,7 +112,7 @@ fun SpeedButton(state: PlayerState) {
             .background(bg, ModeButtonShape),
         contentAlignment = Alignment.Center,
     ) {
-        if (normal) Icon(Icons.Rounded.Speed, "Playback speed", tint = ink, modifier = Modifier.size(18.dp))
+        if (normal) PlayerDrawableIcon(R.drawable.ic_player_speed, "Playback speed", ink, Modifier.size(18.dp))
         else Text(PlaybackSpeed.label(state.speed) + "×", color = ink, fontSize = 12.5.sp, fontWeight = FontWeight.Black)
     }
 }

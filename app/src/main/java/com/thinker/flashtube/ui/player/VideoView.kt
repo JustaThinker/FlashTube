@@ -88,6 +88,7 @@ import androidx.compose.material.icons.rounded.ZoomIn
 import androidx.compose.ui.composed
 import androidx.compose.ui.graphics.luminance
 import com.thinker.flashtube.ui.player.components.PlayerPlayPauseGlyph
+import com.thinker.flashtube.ui.player.components.PlayerDrawableIcon
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalView
@@ -568,7 +569,7 @@ fun VideoContent(
 
                     // Picture-in-picture
                     if (pip?.supported == true) {
-                        GlassButton(Icons.Rounded.PictureInPictureAlt, "Picture-in-picture", enabled, size = 32.dp, iconSize = 18.dp) {
+                        GlassButton(null, "Picture-in-picture", enabled, drawableRes = R.drawable.ic_player_floating, size = 32.dp, iconSize = 18.dp) {
                             controlsVisible = false
                             if (!pip.enter(state.videoAspect)) state.actionMessage = "Picture-in-picture is turned off for FlashTube in Settings."
                         }
@@ -576,7 +577,7 @@ fun VideoContent(
                     }
 
                     // Settings (Gear) icon - opens playback settings list (Morphe/YouTube style)
-                    GlassButton(Icons.Rounded.Settings, "Playback settings", enabled, size = 32.dp, iconSize = 18.dp) {
+                    GlassButton(null, "Playback settings", enabled, drawableRes = R.drawable.ic_player_settings, size = 32.dp, iconSize = 18.dp) {
                         touched()
                         state.sheet = PlayerSheet.Settings
                     }
@@ -662,9 +663,10 @@ fun VideoContent(
                             Spacer(Modifier.width(6.dp))
                         }
                         GlassButton(
-                            if (fullscreen) Icons.Rounded.FullscreenExit else Icons.Rounded.Fullscreen,
+                            null,
                             if (fullscreen) "Exit fullscreen" else "Fullscreen",
                             enabled,
+                            drawableRes = if (fullscreen) R.drawable.ic_player_fullscreen_exit else R.drawable.ic_player_fullscreen,
                             size = 34.dp,
                             iconSize = 22.dp,
                             tinted = false,
@@ -1214,9 +1216,10 @@ fun PlayerSettingsSheet(state: PlayerState, onDismiss: () -> Unit) {
 
                     // Loop Video
                     CompactPlayerSwitchRow(
-                        icon = Icons.Rounded.Repeat,
+                        icon = null,
                         title = "Loop video",
                         checked = state.loopEnabled,
+                        drawableRes = R.drawable.ic_player_loop,
                         onCheckedChange = { state.toggleLoop() },
                     )
 
@@ -1344,9 +1347,10 @@ fun PlayerSettingsSheet(state: PlayerState, onDismiss: () -> Unit) {
                     // 2. Playback Speed
                     val speedDisplay = if (state.speed == 1f) "Normal" else "${state.speed}×"
                     CompactPlayerNavRow(
-                        icon = Icons.Rounded.Speed,
+                        icon = null,
                         title = "Playback speed",
                         value = speedDisplay,
+                        drawableRes = R.drawable.ic_player_speed,
                         onClick = { currentSubMenu = "speed" },
                     )
 
@@ -1394,10 +1398,11 @@ fun PlayerSettingsSheet(state: PlayerState, onDismiss: () -> Unit) {
 
 @Composable
 private fun CompactPlayerNavRow(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: androidx.compose.ui.graphics.vector.ImageVector?,
     title: String,
     value: String,
     onClick: () -> Unit,
+    drawableRes: Int? = null,
 ) {
     val c = MaterialTheme.colorScheme
     Row(
@@ -1407,7 +1412,8 @@ private fun CompactPlayerNavRow(
             .padding(horizontal = 20.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, null, tint = c.onSurface, modifier = Modifier.size(22.dp))
+        if (drawableRes != null) PlayerDrawableIcon(drawableRes, null, c.onSurface, Modifier.size(22.dp))
+        else icon?.let { Icon(it, null, tint = c.onSurface, modifier = Modifier.size(22.dp)) }
         Spacer(Modifier.width(16.dp))
         Text(
             text = title,
@@ -1433,10 +1439,11 @@ private fun CompactPlayerNavRow(
 
 @Composable
 private fun CompactPlayerSwitchRow(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: androidx.compose.ui.graphics.vector.ImageVector?,
     title: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
+    drawableRes: Int? = null,
 ) {
     val c = MaterialTheme.colorScheme
     Row(
@@ -1446,7 +1453,8 @@ private fun CompactPlayerSwitchRow(
             .padding(horizontal = 20.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, null, tint = c.onSurface, modifier = Modifier.size(22.dp))
+        if (drawableRes != null) PlayerDrawableIcon(drawableRes, null, c.onSurface, Modifier.size(22.dp))
+        else icon?.let { Icon(it, null, tint = c.onSurface, modifier = Modifier.size(22.dp)) }
         Spacer(Modifier.width(16.dp))
         Text(
             text = title,
@@ -1483,10 +1491,11 @@ private fun BoxScope.ErrorPanel(message: String, onRetry: () -> Unit, onCollapse
 
 @Composable
 private fun GlassButton(
-    icon: ImageVector,
+    icon: ImageVector?,
     description: String,
     enabled: Boolean,
     modifier: Modifier = Modifier,
+    drawableRes: Int? = null,
     size: Dp = 38.dp,
     iconSize: Dp = 22.dp,
     tinted: Boolean = true,
@@ -1499,7 +1508,10 @@ private fun GlassButton(
             .clip(CircleShape)
             .background(if (tinted) Color.Black.copy(alpha = 0.38f) else Color.Black.copy(alpha = 0f)),
         contentAlignment = Alignment.Center,
-    ) { Icon(icon, description, tint = Color.White, modifier = Modifier.size(iconSize)) }
+    ) {
+        if (drawableRes != null) PlayerDrawableIcon(drawableRes, description, Color.White, Modifier.size(iconSize))
+        else icon?.let { Icon(it, description, tint = Color.White, modifier = Modifier.size(iconSize)) }
+    }
 }
 
 private val SeekStepMs: Long get() = SeekConfig.stepMs

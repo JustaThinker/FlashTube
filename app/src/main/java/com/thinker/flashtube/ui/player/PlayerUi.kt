@@ -86,6 +86,8 @@ import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.ThumbDown
 import androidx.compose.material.icons.rounded.ThumbUp
 import androidx.compose.material.icons.rounded.WatchLater
+import androidx.compose.ui.res.painterResource
+import com.thinker.flashtube.ui.player.components.PlayerDrawableIcon
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material3.Card
@@ -815,12 +817,20 @@ private fun AccountActions(state: PlayerState) {
         }
     }
     ActionPill(
-        icon = if (state.inWatchLater) Icons.Rounded.WatchLater else Icons.Outlined.WatchLater,
+        icon = null,
         label = if (state.inWatchLater) "Saved" else "Save",
         active = state.inWatchLater,
         flourish = Flourish.Drop,
         shape = RoundedCornerShape(18.dp),
         description = "Save to Watch later",
+        customIcon = {
+            PlayerDrawableIcon(
+                R.drawable.ic_player_save,
+                "Save to Watch later",
+                if (state.inWatchLater) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+                Modifier.size(18.dp),
+            )
+        },
     ) {
         if (signedIn) state.toggleWatchLater()
         else state.actionMessage = "Sign in to save videos"
@@ -1017,11 +1027,11 @@ fun MiniPlayer(state: PlayerState, onExpand: () -> Unit, modifier: Modifier = Mo
                             modifier = Modifier.size(14.dp),
                         )
                     } else {
-                        Icon(
-                            imageVector = if (state.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                            contentDescription = if (state.isPlaying) "Pause" else "Play",
-                            tint = Color.White,
-                            modifier = Modifier.size(16.dp),
+                        PlayerDrawableIcon(
+                            if (state.isPlaying) R.drawable.ic_player_pause else R.drawable.ic_player_play,
+                            if (state.isPlaying) "Pause" else "Play",
+                            Color.White,
+                            Modifier.size(16.dp),
                         )
                     }
                 }

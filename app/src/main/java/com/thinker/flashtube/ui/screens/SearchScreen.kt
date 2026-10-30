@@ -55,6 +55,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -228,7 +229,7 @@ fun SearchScreen(
                             .padding(start = 12.dp, end = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Icon(Icons.Rounded.Search, null, tint = c.onSurfaceVariant, modifier = Modifier.size(18.dp))
+                        Icon(painterResource(R.drawable.ic_player_search), null, tint = c.onSurfaceVariant, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
                         Box(Modifier.weight(1f)) {
                             if (state.query.isEmpty()) {
@@ -290,9 +291,10 @@ fun SearchScreen(
                                 }
                             } else if (state.suggestions.isEmpty() && matchingHistory.isEmpty()) {
                                 EmptyState(
-                                    icon = Icons.Rounded.Search,
+                                    icon = null,
                                     title = "Keep typing",
                                     body = "Suggestions appear as you enter a search.",
+                                    iconRes = R.drawable.ic_player_search,
                                 )
                             } else {
                                 LazyColumn(contentPadding = contentPadding) {
@@ -342,7 +344,7 @@ fun SearchScreen(
                                                 .padding(horizontal = 16.dp, vertical = 10.dp),
                                             verticalAlignment = Alignment.CenterVertically,
                                         ) {
-                                            Icon(Icons.Rounded.Search, null, tint = c.onSurfaceVariant, modifier = Modifier.size(20.dp))
+                                            Icon(painterResource(R.drawable.ic_player_search), null, tint = c.onSurfaceVariant, modifier = Modifier.size(20.dp))
                                             Spacer(Modifier.width(16.dp))
                                             Text(
                                                 suggestion,
@@ -375,9 +377,10 @@ fun SearchScreen(
                         }
                         state.results.isEmpty() -> {
                             EmptyState(
-                                icon = Icons.Rounded.Search,
+                                icon = null,
                                 title = "No results found",
                                 body = "No videos matched \"${state.submitted}\". Try another search.",
+                                iconRes = R.drawable.ic_player_search,
                             )
                         }
                         else -> {

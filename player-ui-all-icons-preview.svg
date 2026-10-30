@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="770" viewBox="0 0 960 770" fill="none">
+  <defs>
+    <style>
+      .bg{fill:#f5f6f8}.tile{fill:#fff;stroke:#e2e5e9;stroke-width:1.4}.ink{color:#17191d;fill:none;stroke:#17191d;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}.label{fill:#202329;font:600 15px Inter,Arial,sans-serif}.head{fill:#14161a;font:650 23px Inter,Arial,sans-serif}.sub{fill:#777e89;font:13px Inter,Arial,sans-serif}
+    </style>
+    <symbol id="previous" viewBox="0 0 48 48"><path d="M12 15v18"/><path d="m36 14-18 10 18 10V14Z" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="play" viewBox="0 0 48 48"><path d="m17 12 19 12-19 12V12Z" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="pause" viewBox="0 0 48 48"><rect x="14" y="14" width="6" height="20" rx="1.7" fill="currentColor" stroke="none"/><rect x="28" y="14" width="6" height="20" rx="1.7" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="next" viewBox="0 0 48 48"><path d="M36 15v18"/><path d="m12 14 18 10-18 10V14Z" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="fullscreen" viewBox="0 0 48 48"><path d="M19 12h-7v7M29 12h7v7M36 29v7h-7M19 36h-7v-7"/></symbol>
+    <symbol id="settings" viewBox="0 0 48 48"><path d="m20 9 1.2-2h5.6L28 9l3 1.3 2.2-.8 3.9 3.9-.8 2.2 1.3 3 2 1.2v5.6l-2 1.2-1.3 3 .8 2.2-3.9 3.9-2.2-.8-3 1.3-1.2 2h-5.6L20 37l-3-1.3-2.2.8-3.9-3.9.8-2.2-1.3-3-2-1.2v-5.6l2-1.2 1.3-3-.8-2.2 3.9-3.9 2.2.8L20 9Z"/><circle cx="24" cy="23" r="5.5"/></symbol>
+    <symbol id="floating" viewBox="0 0 48 48"><rect x="8" y="10" width="32" height="26" rx="4"/><path d="M13 15h14"/><rect x="23" y="22" width="17" height="14" rx="3" fill="#fff"/><path d="m29 25 7 4-7 4v-8Z" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="speed" viewBox="0 0 48 48"><path d="M10 31a16 16 0 1 1 28 0M13 36h22M24 25l8-9"/><circle cx="24" cy="25" r="2.5" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="comment" viewBox="0 0 48 48"><path d="M10 11h28v21H23l-9 6v-6h-4V11Z"/><path d="M17 18h14M17 24h10"/></symbol>
+    <symbol id="like" viewBox="0 0 48 48"><path d="M17 21v16h-6V21h6Zm0 14h17.2a3 3 0 0 0 2.9-2.2l3-11a3 3 0 0 0-2.9-3.8H27l1.2-6.1a3 3 0 0 0-5.3-2.4L17 18v17Z"/></symbol>
+    <symbol id="dislike" viewBox="0 0 48 48"><g transform="rotate(180 24 24)"><path d="M17 21v16h-6V21h6Zm0 14h17.2a3 3 0 0 0 2.9-2.2l3-11a3 3 0 0 0-2.9-3.8H27l1.2-6.1a3 3 0 0 0-5.3-2.4L17 18v17Z"/></g></symbol>
+    <symbol id="save" viewBox="0 0 48 48"><path d="M13 9h22a2 2 0 0 1 2 2v28L24 31l-13 8V11a2 2 0 0 1 2-2Z"/></symbol>
+    <symbol id="download" viewBox="0 0 48 48"><path d="M24 7v22m-8-8 8 8 8-8M11 33v5h26v-5"/></symbol>
+    <symbol id="share" viewBox="0 0 48 48"><path d="M26 9h13v13M39 9 20 28M33 25v11a3 3 0 0 1-3 3H12a3 3 0 0 1-3-3V18a3 3 0 0 1 3-3h11"/></symbol>
+    <symbol id="search" viewBox="0 0 48 48"><circle cx="20.5" cy="20.5" r="12"/><path d="m29.5 29.5 9 9"/></symbol>
+  </defs>
+  <rect class="bg" width="960" height="770" rx="26"/>
+  <text x="34" y="48" class="head">FlashTube player · complete icon preview</text>
+  <text x="34" y="72" class="sub">Navbar-inspired line weight · filled transport arrows · identical 48 × 48 icon canvases</text>
+  <text x="34" y="109" class="sub">PLAYBACK</text>
+  <g transform="translate(28 124)">
+    <g><rect class="tile" width="164" height="112" rx="16"/><use href="#previous" x="58" y="17" width="48" height="48" class="ink"/><text x="82" y="91" text-anchor="middle" class="label">Previous</text></g>
+    <g transform="translate(174)"><rect class="tile" width="164" height="112" rx="16"/><use href="#play" x="58" y="17" width="48" height="48" class="ink"/><text x="82" y="91" text-anchor="middle" class="label">Play</text></g>
+    <g transform="translate(348)"><rect class="tile" width="164" height="112" rx="16"/><use href="#pause" x="58" y="17" width="48" height="48" class="ink"/><text x="82" y="91" text-anchor="middle" class="label">Pause</text></g>
+    <g transform="translate(522)"><rect class="tile" width="164" height="112" rx="16"/><use href="#next" x="58" y="17" width="48" height="48" class="ink"/><text x="82" y="91" text-anchor="middle" class="label">Next</text></g>
+    <g transform="translate(696)"><rect class="tile" width="164" height="112" rx="16"/><use href="#fullscreen" x="58" y="17" width="48" height="48" class="ink"/><text x="82" y="91" text-anchor="middle" class="label">Fullscreen</text></g>
+  </g>
+  <text x="34" y="283" class="sub">PLAYER TOOLS</text>
+  <g transform="translate(28 298)">
+    <g><rect class="tile" width="164" height="112" rx="16"/><use href="#settings" x="58" y="17" width="48" height="48" class="ink"/><text x="82" y="91" text-anchor="middle" class="label">Settings</text></g>
+    <g transform="translate(174)"><rect class="tile" width="164" height="112" rx="16"/><use href="#floating" x="58" y="17" width="48" height="48" class="ink"/><text x="82" y="91" text-anchor="middle" class="label">Floating player</text></g>
+    <g transform="translate(348)"><rect class="tile" width="164" height="112" rx="16"/><use href="#speed" x="58" y="17" width="48" height="48" class="ink"/><text x="82" y="91" text-anchor="middle" class="label">Speed</text></g>
+    <g transform="translate(522)"><rect class="tile" width="164" height="112" rx="16"/><use href="#comment" x="58" y="17" width="48" height="48" class="ink"/><text x="82" y="91" text-anchor="middle" class="label">Comments</text></g>
+  </g>
+  <text x="34" y="457" class="sub">VIDEO ACTIONS</text>
+  <g transform="translate(28 472)">
+    <g><rect class="tile" width="164" height="112" rx="16"/><use href="#like" x="58" y="17" width="48" height="48" class="ink"/><text x="82" y="91" text-anchor="middle" class="label">Like</text></g>
+    <g transform="translate(174)"><rect class="tile" width="164" height="112" rx="16"/><use href="#dislike" x="58" y="17" width="48" height="48" class="ink"/><text x="82" y="91" text-anchor="middle" class="label">Dislike</text></g>
+    <g transform="translate(348)"><rect class="tile" width="164" height="112" rx="16"/><use href="#save" x="58" y="17" width="48" height="48" class="ink"/><text x="82" y="91" text-anchor="middle" class="label">Save</text></g>
+    <g transform="translate(522)"><rect class="tile" width="164" height="112" rx="16"/><use href="#download" x="58" y="17" width="48" height="48" class="ink"/><text x="82" y="91" text-anchor="middle" class="label">Download</text></g>
+    <g transform="translate(696)"><rect class="tile" width="164" height="112" rx="16"/><use href="#share" x="58" y="17" width="48" height="48" class="ink"/><text x="82" y="91" text-anchor="middle" class="label">Share</text></g>
+  </g>
+  <g transform="translate(398 610)">
+    <rect class="tile" width="164" height="112" rx="16"/><use href="#search" x="58" y="17" width="48" height="48" class="ink"/><text x="82" y="91" text-anchor="middle" class="label">Search</text>
+  </g>
+</svg>

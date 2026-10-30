@@ -1,0 +1,73 @@
+﻿<svg xmlns="http://www.w3.org/2000/svg" width="900" height="700" viewBox="0 0 900 700">
+  <defs>
+    <style>
+      text { font-family: Inter, Arial, sans-serif; }
+      .bg { fill: #0F0F0F; }
+      .screen { fill: #0F0F0F; stroke: #33343b; stroke-width: 1.5; }
+      .card { fill: #181818; }
+      .white { fill: #F1F1F1; }
+      .muted { fill: #AAAAAA; }
+      .accent { fill: #FFFFFF; }
+      .label { font-size: 11px; font-weight: 700; letter-spacing: 1.3px; }
+      .main { font-size: 22px; font-weight: 800; }
+      .name { font-size: 15px; font-weight: 700; }
+      .body { font-size: 13px; }
+      .small { font-size: 11px; }
+    </style>
+    <linearGradient id="accountCard" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#212121"/>
+      <stop offset="1" stop-color="#181818"/>
+    </linearGradient>
+  </defs>
+  <rect width="900" height="700" class="bg"/>
+  <text x="36" y="43" class="white" font-size="23" font-weight="800">Account UI concepts</text>
+  <text x="36" y="66" class="muted" font-size="12">Account card + dedicated Accounts page · matching current Settings styling</text>
+
+  <text x="40" y="112" class="accent label">SETTINGS · ACCOUNT CARD</text>
+  <rect x="32" y="130" width="398" height="530" rx="28" class="screen"/>
+  <text x="58" y="181" class="white main">Settings</text>
+  <text x="58" y="235" class="accent label">ACCOUNT</text>
+  <rect x="52" y="252" width="358" height="150" rx="20" fill="url(#accountCard)"/>
+  <circle cx="94" cy="296" r="23" fill="#5B5B5B"/>
+  <text x="94" y="301" text-anchor="middle" class="white" font-size="14" font-weight="700">A</text>
+  <text x="130" y="291" class="white name">Alex Morgan</text>
+  <text x="130" y="312" class="muted small">@alexmorgan</text>
+  <text x="382" y="305" text-anchor="middle" class="muted" font-size="22">⌄</text>
+  <line x1="72" y1="337" x2="390" y2="337" stroke="#303030"/>
+  <circle cx="84" cy="370" r="9" fill="#5B5B5B"/>
+  <circle cx="98" cy="370" r="9" fill="#5B5B5B" stroke="#181818" stroke-width="2"/>
+  <text x="119" y="374" class="white small">2 accounts</text>
+  <text x="380" y="374" text-anchor="middle" class="muted" font-size="18">›</text>
+  <text x="58" y="447" class="muted body">Rounded 20 dp card, existing account avatar</text>
+  <text x="58" y="467" class="muted body">and down chevron to expand the saved accounts.</text>
+  <text x="58" y="513" class="muted small">The separate Accounts page is reached from</text>
+  <text x="58" y="531" class="muted small">the account count row.</text>
+  <text x="58" y="606" class="muted small">Uses the app's existing surface and text style.</text>
+
+  <text x="474" y="112" class="accent label">ACCOUNTS · SAVED ACCOUNT CARD</text>
+  <rect x="462" y="130" width="398" height="530" rx="28" class="screen"/>
+  <text x="490" y="181" class="muted" font-size="24">‹</text>
+  <text x="530" y="181" class="white main">Accounts</text>
+  <text x="490" y="222" class="muted body">Select an account to switch profiles.</text>
+  <text x="490" y="268" class="accent label">SAVED ACCOUNTS</text>
+  <rect x="482" y="285" width="358" height="190" rx="20" class="card"/>
+  <circle cx="521" cy="325" r="21" fill="#5B5B5B"/>
+  <text x="521" y="330" text-anchor="middle" class="white" font-size="13" font-weight="700">A</text>
+  <text x="557" y="320" class="white name">Alex Morgan</text>
+  <text x="557" y="341" class="muted small">@alexmorgan</text>
+  <text x="814" y="332" text-anchor="middle" class="accent" font-size="15">✓</text>
+  <line x1="502" y1="360" x2="820" y2="360" stroke="#303030"/>
+  <circle cx="521" cy="399" r="21" fill="#5B5B5B"/>
+  <text x="521" y="404" text-anchor="middle" class="white" font-size="13" font-weight="700">J</text>
+  <text x="557" y="394" class="white name">Jamie Lee</text>
+  <text x="557" y="415" class="muted small">@jamielee</text>
+  <text x="814" y="405" text-anchor="middle" class="muted" font-size="18">×</text>
+  <line x1="502" y1="439" x2="820" y2="439" stroke="#303030"/>
+  <text x="520" y="463" class="white body">+  Add another account</text>
+  <rect x="482" y="496" width="358" height="58" rx="16" class="card"/>
+  <text x="504" y="531" class="white body">Sign out</text>
+  <text x="817" y="531" text-anchor="middle" class="muted" font-size="18">›</text>
+  <text x="490" y="596" class="muted small">Grouped rows follow the existing Preferences card.</text>
+  <text x="490" y="615" class="muted small">Current account gets the existing check indicator.</text>
+</svg>
+

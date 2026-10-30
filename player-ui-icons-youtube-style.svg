@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="710" viewBox="0 0 1040 710" fill="none">
+  <defs>
+    <style>
+      .ink{color:#fff;fill:none;stroke:#fff;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}.label{fill:#f1f1f1;font:500 14px Inter,Arial,sans-serif}.heading{fill:#fff;font:600 22px Inter,Arial,sans-serif}.sub{fill:#c2c4c8;font:13px Inter,Arial,sans-serif}.section{fill:#b6b8bd;font:600 11px Inter,Arial,sans-serif;letter-spacing:1.7px}
+    </style>
+    <symbol id="play" viewBox="0 0 48 48"><path d="M18.4 13.6c0-1.5 1.6-2.4 2.9-1.6l15.1 10c1.2.8 1.2 2.4 0 3.2l-15.1 10c-1.3.8-2.9-.1-2.9-1.6V13.6Z" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="pause" viewBox="0 0 48 48"><rect x="14.5" y="14" width="6" height="20" rx="2.4" fill="currentColor" stroke="none"/><rect x="27.5" y="14" width="6" height="20" rx="2.4" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="fullscreen" viewBox="0 0 48 48"><path d="M19 12.5h-5.5a1 1 0 0 0-1 1V19m16.5-6.5h5.5a1 1 0 0 1 1 1V19M36.5 29v5.5a1 1 0 0 1-1 1H30m-11 0h-5.5a1 1 0 0 1-1-1V29"/></symbol>
+    <symbol id="settings" viewBox="0 0 48 48"><path d="M21.1 8.9a3 3 0 0 1 5.8 0l.7 2.2a13.5 13.5 0 0 1 2.4 1l2.1-1a3 3 0 0 1 4.1 4.1l-1 2.1c.4.8.8 1.6 1 2.4l2.2.7a3 3 0 0 1 0 5.8l-2.2.7a13.5 13.5 0 0 1-1 2.4l1 2.1a3 3 0 0 1-4.1 4.1l-2.1-1c-.8.4-1.6.8-2.4 1l-.7 2.2a3 3 0 0 1-5.8 0l-.7-2.2a13.5 13.5 0 0 1-2.4-1l-2.1 1a3 3 0 0 1-4.1-4.1l1-2.1a13.5 13.5 0 0 1-1-2.4l-2.2-.7a3 3 0 0 1 0-5.8l2.2-.7a13.5 13.5 0 0 1 1-2.4l-1-2.1a3 3 0 0 1 4.1-4.1l2.1 1c.8-.4 1.6-.8 2.4-1l.7-2.2Z"/><circle cx="24" cy="24" r="5.4"/></symbol>
+    <symbol id="floating" viewBox="0 0 48 48"><rect x="8.5" y="11" width="31" height="24" rx="4.5"/><rect x="22" y="21.5" width="17.5" height="13.5" rx="3.2" fill="white"/><path d="M28.4 25.2c0-.65.7-1.05 1.25-.7l5.5 3.35c.55.35.55 1.15 0 1.5l-5.5 3.35c-.55.35-1.25-.05-1.25-.7v-6.8Z" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="speed" viewBox="0 0 48 48"><path d="M10.5 30a15.5 15.5 0 1 1 27 0M14 35h20M24 24l7.5-7.5"/><circle cx="24" cy="24" r="2.2" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="loop" viewBox="0 0 48 48"><path d="M13 24v-2a6 6 0 0 1 6-6h16m-4-4 4 4-4 4M35 24v2a6 6 0 0 1-6 6H13m4 4-4-4 4-4"/></symbol>
+    <symbol id="comment" viewBox="0 0 48 48"><path d="M13.5 12.5h21a3.5 3.5 0 0 1 3.5 3.5v13a3.5 3.5 0 0 1-3.5 3.5H23l-8 5v-5h-1.5a3.5 3.5 0 0 1-3.5-3.5V16a3.5 3.5 0 0 1 3.5-3.5Z"/><path d="M17 20h14m-14 6h9"/></symbol>
+    <symbol id="save" viewBox="0 0 48 48"><path d="M14 10.5h20a2.5 2.5 0 0 1 2.5 2.5v24.5L24 30l-12.5 7.5V13a2.5 2.5 0 0 1 2.5-2.5Z"/></symbol>
+    <symbol id="search" viewBox="0 0 48 48"><circle cx="20.5" cy="20.5" r="11.5"/><path d="m29 29 8.5 8.5"/></symbol>
+  </defs>
+  <!-- Plain dark preview canvas; individual glyphs have no button or tile backgrounds. -->
+  <rect width="1040" height="710" fill="#101114"/>
+  <text x="34" y="46" class="heading">FlashTube · Player icons</text>
+  <text x="34" y="70" class="sub">Rounded, minimal glyphs · transparent background · consistent 48 × 48 viewBox</text>
+  <text x="34" y="111" class="section">PLAYBACK</text>
+  <g transform="translate(34 126)">
+    <g transform="translate(204)"><use href="#play" x="64" y="0" width="48" height="48" class="ink"/><text x="88" y="72" text-anchor="middle" class="label">Play</text></g>
+    <g transform="translate(398)"><use href="#pause" x="64" y="0" width="48" height="48" class="ink"/><text x="88" y="72" text-anchor="middle" class="label">Pause</text></g>
+    <g transform="translate(592)"><use href="#fullscreen" x="64" y="0" width="48" height="48" class="ink"/><text x="88" y="72" text-anchor="middle" class="label">Fullscreen</text></g>
+  </g>
+  <text x="34" y="239" class="section">PLAYER TOOLS</text>
+  <g transform="translate(34 254)">
+    <g><use href="#settings" x="64" y="0" width="48" height="48" class="ink"/><text x="88" y="72" text-anchor="middle" class="label">Settings</text></g>
+    <g transform="translate(194)"><use href="#floating" x="64" y="0" width="48" height="48" class="ink"/><text x="88" y="72" text-anchor="middle" class="label">Floating</text></g>
+    <g transform="translate(388)"><use href="#speed" x="64" y="0" width="48" height="48" class="ink"/><text x="88" y="72" text-anchor="middle" class="label">Speed</text></g>
+    <g transform="translate(582)"><use href="#comment" x="64" y="0" width="48" height="48" class="ink"/><text x="88" y="72" text-anchor="middle" class="label">Comments</text></g>
+    <g transform="translate(776)"><use href="#loop" x="64" y="0" width="48" height="48" class="ink"/><text x="88" y="72" text-anchor="middle" class="label">Loop</text></g>
+  </g>
+  <text x="34" y="367" class="section">VIDEO ACTIONS</text>
+  <g transform="translate(326 382)">
+    <g><use href="#save" x="64" y="0" width="48" height="48" class="ink"/><text x="88" y="72" text-anchor="middle" class="label">Save</text></g>
+    <g transform="translate(194)"><use href="#search" x="64" y="0" width="48" height="48" class="ink"/><text x="88" y="72" text-anchor="middle" class="label">Search</text></g>
+  </g>
+</svg>
