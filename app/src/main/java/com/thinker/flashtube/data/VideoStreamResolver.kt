@@ -145,21 +145,25 @@ object VideoStreamResolver {
         includeHdr: Boolean = false,
     ): VideoStreamResult = withContext(Dispatchers.IO) {
         val playerSession = getPlayerSession(context)
-        val direct = playerSession.visionOsVetted(videoId) { streamingData ->
-            val adaptive = streamingData.optJSONArray("adaptiveFormats")
-            if (adaptive != null) {
-                for (i in 0 until adaptive.length()) {
-                    val format = adaptive.optJSONObject(i) ?: continue
-                    if (format.optString("mimeType").startsWith("audio/")) {
-                        val url = format.optString("url")
-                        if (url.isNotEmpty()) return@visionOsVetted url
+        val direct = runCatching {
+            kotlinx.coroutines.withTimeoutOrNull(10_000L) {
+                playerSession.visionOsVetted(videoId) { streamingData ->
+                    val adaptive = streamingData.optJSONArray("adaptiveFormats")
+                    if (adaptive != null) {
+                        for (i in 0 until adaptive.length()) {
+                            val format = adaptive.optJSONObject(i) ?: continue
+                            if (format.optString("mimeType").startsWith("audio/")) {
+                                val url = format.optString("url")
+                                if (url.isNotEmpty()) return@visionOsVetted url
+                            }
+                        }
                     }
+                    null
                 }
             }
-            null
-        }
+        }.getOrNull()
 
-        direct.answer?.let { answer ->
+        direct?.answer?.let { answer ->
             val qualities = parseDirectVideoQualities(answer.streamingData, includeHdr)
             if (qualities.isNotEmpty()) {
                 BotCheckVerdict.clearOnSuccess()
@@ -181,8 +185,10 @@ object VideoStreamResolver {
 
         var newPipeBotChecked = false
         try {
-            val extracted = getVideoStreamsFromNewPipe(videoId)
-            if (extracted.qualities.isNotEmpty()) {
+            val extracted = kotlinx.coroutines.withTimeoutOrNull(10_000L) {
+                getVideoStreamsFromNewPipe(videoId)
+            }
+            if (extracted != null && extracted.qualities.isNotEmpty()) {
                 BotCheckVerdict.clearOnSuccess()
                 Log.i(
                     STREAM_TAG,
@@ -201,7 +207,9 @@ object VideoStreamResolver {
         }
 
         try {
-            val streamingData = playerSession.nativeFallback(videoId, newPipeBotChecked)?.streamingData
+            val streamingData = kotlinx.coroutines.withTimeoutOrNull(8_000L) {
+                playerSession.nativeFallback(videoId, newPipeBotChecked)?.streamingData
+            }
             if (streamingData != null) {
                 val qualities = parseDirectVideoQualities(streamingData, includeHdr)
                 return@withContext VideoStreamResult(qualities)

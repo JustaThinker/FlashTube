@@ -28,6 +28,7 @@ import androidx.media3.exoplayer.dash.manifest.DashManifest
 import androidx.media3.exoplayer.dash.manifest.DashManifestParser
 import androidx.media3.exoplayer.dash.manifest.Period
 import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.trackselection.AdaptiveTrackSelection
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.exoplayer.drm.DrmSessionManagerProvider
@@ -63,38 +64,31 @@ class PlaybackService : MediaSessionService() {
         super.onCreate()
         // The video renderer runs on AvSync's clock offset (TextureView lip sync).
         val sources = YouTubeMediaSourceFactory(this)
-        val player = ExoPlayer.Builder(this, SyncedRenderersFactory(this))
+        val player = ExoPlayer.Builder(this, DefaultRenderersFactory(this))
             .setMediaSourceFactory(sources)
-            // Auto quality climbs after 2 s of buffer instead of the default 10 s, so a
-            // video that starts low reaches HD within a few seconds (YouTube-like).
             .setTrackSelector(
                 DefaultTrackSelector(
                     this,
                     AdaptiveTrackSelection.Factory(
-                        /* minDurationForQualityIncreaseMs = */ 2_000,
-                        /* maxDurationForQualityDecreaseMs = */ 25_000,
-                        /* minDurationToRetainAfterDiscardMs = */ 25_000,
+                        /* minDurationForQualityIncreaseMs = */ 3_000,
+                        /* maxDurationForQualityDecreaseMs = */ 20_000,
+                        /* minDurationToRetainAfterDiscardMs = */ 20_000,
                         /* bandwidthFraction = */ 0.75f,
                     ),
                 ).apply {
-                    // YouTube's 60 fps HD rungs can need a different decoder configuration
-                    // than the 30 fps SD rungs; by default the player then drops them from
-                    // the adaptive set and Auto is stuck at 480p. Allow switching across them.
                     setParameters(
                         buildUponParameters()
                             .setAllowVideoMixedDecoderSupportAdaptiveness(true)
-                            .setAllowVideoNonSeamlessAdaptiveness(true),
+                            .setAllowVideoNonSeamlessAdaptiveness(false),
                     )
                 },
             )
-            // Start after 1 s of media instead of 2.5 s (2 s after a stall): at 1080p60 that
-            // halves what must download before the first frame.
             .setLoadControl(
                 DefaultLoadControl.Builder()
-                    .setBufferDurationsMs(10_000, 120_000, 1_000, 800)
-                    .setTargetBufferBytes(96 * 1024 * 1024)
-                    .setBackBuffer(45_000, true)
-                    .setPrioritizeTimeOverSizeThresholds(false)
+                    .setBufferDurationsMs(15_000, 50_000, 2_500, 4_000)
+                    .setTargetBufferBytes(DefaultLoadControl.DEFAULT_TARGET_BUFFER_BYTES)
+                    .setBackBuffer(15_000, false)
+                    .setPrioritizeTimeOverSizeThresholds(true)
                     .build(),
             )
             .setAudioAttributes(
@@ -167,7 +161,7 @@ class PlaybackService : MediaSessionService() {
             mediaItems.map { item ->
                 val resolutionStartedAt = android.os.SystemClock.elapsedRealtime()
                 val ladder = runCatching {
-                    kotlinx.coroutines.runBlocking {
+                    kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
                         com.thinker.flashtube.data.VideoStreamResolver.resolve(this@PlaybackService, item.mediaId)
                     }
                 }.getOrNull()
@@ -491,7 +485,9 @@ private class YouTubeMediaSourceFactory(private val context: Context) : MediaSou
         // Fast direct stream resolution (~100-150ms)
         val streamResult = runCatching {
             kotlinx.coroutines.runBlocking {
-                com.thinker.flashtube.data.VideoStreamResolver.getVideoStreamResult(context, mediaItem.mediaId)
+                kotlinx.coroutines.withTimeoutOrNull(12_000L) {
+                    com.thinker.flashtube.data.VideoStreamResolver.getVideoStreamResult(context, mediaItem.mediaId)
+                }
             }
         }.getOrNull()
 

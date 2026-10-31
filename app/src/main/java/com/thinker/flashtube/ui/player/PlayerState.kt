@@ -520,7 +520,11 @@ class PlayerState(private val scope: CoroutineScope) {
         }
         loadJob?.cancel()
         loadJob = scope.launch {
-            runCatching { YouTube.details(item.id, includeRelated = false) }
+            runCatching {
+                kotlinx.coroutines.withTimeoutOrNull(20_000L) {
+                    YouTube.details(item.id, includeRelated = false)
+                } ?: throw java.io.IOException("Video request timed out.")
+            }
                 .onSuccess { d ->
                     Log.i("FlashTubeTime", "details +${android.os.SystemClock.elapsedRealtime() - openedAt}ms")
                     details = d
@@ -1179,12 +1183,12 @@ fun rememberPlayerState(): PlayerState {
             state.controller = null
         }
     }
-    // Position isn't evented. Keep the controller state fresh even before the first
-    // isPlaying event, otherwise a delayed playback-start event can leave progress stale.
-    LaunchedEffect(state.controller) {
-        while (isActive && state.controller != null) {
-            state.syncFromPlayer()
+    // Sync player position: runs once when paused/connected, and polls every 250ms only while playing.
+    LaunchedEffect(state.controller, state.isPlaying) {
+        state.syncFromPlayer()
+        while (isActive && state.controller != null && state.isPlaying) {
             delay(250)
+            state.syncFromPlayer()
         }
     }
     return state

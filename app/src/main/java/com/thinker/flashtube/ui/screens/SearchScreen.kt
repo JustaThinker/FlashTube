@@ -514,7 +514,7 @@ fun SearchScreen(
                             } else {
                                 LazyColumn(contentPadding = contentPadding) {
                                     // Local History suggestions (Morph height: 48dp)
-                                    items(matchingHistory, key = { "hist-$it" }) { query ->
+                                    items(matchingHistory, key = { "hist-$it" }, contentType = { "history_suggestion" }) { query ->
                                         Row(
                                             modifier = Modifier
                                                 .fillMaxWidth()
@@ -576,7 +576,7 @@ fun SearchScreen(
                                     }
 
                                     // Live API Suggestions (Morph height: 48dp)
-                                    items(nonHistorySuggestions, key = { "sug-$it" }) { suggestion ->
+                                    items(nonHistorySuggestions, key = { "sug-$it" }, contentType = { "live_suggestion" }) { suggestion ->
                                         Row(
                                             modifier = Modifier
                                                 .fillMaxWidth()

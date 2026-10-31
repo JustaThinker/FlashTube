@@ -86,7 +86,7 @@ fun CategoryChipsBar(
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        items(categories, key = { it.key }) { cat ->
+        items(categories, key = { it.key }, contentType = { "category_chip" }) { cat ->
             val isSelected = cat.key == selectedKey || (selectedKey == null && cat.title.equals("All", true))
             val isTrending = cat.title.equals("Trending", ignoreCase = true) || cat.title.equals("Hot", ignoreCase = true)
             val bgColor by animateColorAsState(

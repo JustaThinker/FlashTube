@@ -39,6 +39,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.runtime.Composable
@@ -285,13 +286,15 @@ fun Modifier.overlayTouchBlock(): Modifier = composed {
 // ── Video cards ────────────────────────────────────────────────────────────────
 
 /**
- * Starts extracting a video's streams the moment a finger rests on it, ~100+ ms before the
- * tap completes. Observes only; never consumes, so clicks and scrolling are unaffected.
+ * Starts extracting a video's streams when a finger rests on a card without scrolling away.
  */
 fun Modifier.prefetchOnPress(videoId: String): Modifier = pointerInput(videoId) {
     awaitEachGesture {
-        awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Main)
-        StreamCache.prefetch(videoId)
+        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Main)
+        val up = waitForUpOrCancellation()
+        if (up != null && (up.position - down.position).getDistance() < 12f) {
+            StreamCache.prefetch(videoId)
+        }
     }
 }
 

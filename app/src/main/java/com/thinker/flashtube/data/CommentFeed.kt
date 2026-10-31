@@ -130,12 +130,23 @@ object CommentFeed {
     }
 
     internal fun parsePage(page: JSONObject): CommentsPage {
-        // Mutations are array elements, so this needs forEachObject (walk skips those).
         val entities = HashMap<String, JSONObject>()
-        page.forEachObject { obj ->
-            val key = obj.optString("entityKey")
-            val payload = obj.optJSONObject("payload")
-            if (key.isNotEmpty() && payload != null) entities[key] = payload
+        val mutations = page.optJSONObject("frameworkUpdates")
+            ?.optJSONObject("entityBatchUpdate")
+            ?.optJSONArray("mutations")
+        if (mutations != null) {
+            for (i in 0 until mutations.length()) {
+                val obj = mutations.optJSONObject(i) ?: continue
+                val key = obj.optString("entityKey")
+                val payload = obj.optJSONObject("payload")
+                if (key.isNotEmpty() && payload != null) entities[key] = payload
+            }
+        } else {
+            page.forEachObject { obj ->
+                val key = obj.optString("entityKey")
+                val payload = obj.optJSONObject("payload")
+                if (key.isNotEmpty() && payload != null) entities[key] = payload
+            }
         }
         val comments = ArrayList<Comment>()
         var total = -1
@@ -153,19 +164,15 @@ object CommentFeed {
                         val repliesToken = thread.optJSONObject("replies")?.collectStrings("token")?.firstOrNull()
                         thread.viewModel()?.let { vm -> parseComment(vm, entities, repliesToken)?.let(comments::add) }
                     }
-                    // Reply pages list the comments themselves.
                     item.has("commentViewModel") -> item.viewModel()?.let { vm -> parseComment(vm, entities, null)?.let(comments::add) }
-                    // The trailing loader ("more comments", or "Show more replies" in a thread).
                     item.has("continuationItemRenderer") -> item.collectStrings("token").firstOrNull()?.let { next = it }
                 }
             }
         }
-        // Pages can overlap at the boundary; ids stay unique for the list keys.
         val unique = comments.distinctBy { it.id }
         return CommentsPage(unique, total, disabled = false, next = next)
     }
 
-    /** The innermost commentViewModel (threads nest it twice: commentViewModel.commentViewModel). */
     private fun JSONObject.viewModel(): JSONObject? {
         var found: JSONObject? = null
         walk { key, obj -> if (found == null && key == "commentViewModel" && obj.has("commentKey")) found = obj }
@@ -179,9 +186,12 @@ object CommentFeed {
         val toolbar = entity.optJSONObject("toolbar")
         val state = entities[vm.optString("toolbarStateKey")]?.optJSONObject("engagementToolbarStateEntityPayload")
         val replyCount = toolbar?.optString("replyCount")?.let { InnerTube.parseViews(it) }?.takeIf { it > 0 }?.toInt() ?: 0
+        val displayName = author?.optString("displayName")?.takeIf { it.isNotBlank() }
+            ?: author?.optString("channelTitle")?.takeIf { it.isNotBlank() }
+            ?: author?.optString("commentId")
         return Comment(
             id = props.optString("commentId").ifBlank { vm.optString("commentId") }.ifBlank { return null },
-            author = author?.optString("displayName").orEmpty(),
+            author = displayName ?: "Anonymous",
             channelId = author?.optString("channelId")?.takeIf { it.startsWith("UC") },
             avatar = author?.optString("avatarThumbnailUrl")?.ifBlank { null }?.let { if (it.startsWith("//")) "https:$it" else it },
             text = props.optJSONObject("content")?.optString("content").orEmpty().trim(),
@@ -197,56 +207,18 @@ object CommentFeed {
 }
 
 /**
- * Commenters' display names. YouTube's comment data only carries @handles, so each name is
- * read from the top of the channel's public feed: the `<title>` is in the first few hundred
- * bytes and the rest is never downloaded (~1 KB per person). Cached for the session; at most
- * four lookups at a time.
+ * Commenters' display names are now parsed directly from author.displayName in the comment payload.
  */
 object ChannelNames {
-    /** channelId → display name, for the UI. */
     val known = mutableStateMapOf<String, String>()
-    /** Every id already asked for (also the ones with no name), so each is fetched once. */
-    private val asked = ConcurrentHashMap.newKeySet<String>()
-    private val gate = Semaphore(4)
-    private val TITLE = Regex("<title>([^<]*)</title>")
-    private const val HEAD_BYTES = 4096L
 
-    /** Looks up the names not known yet; [known] fills in as they arrive. Call on the main thread. */
     fun resolve(scope: CoroutineScope, channelIds: Collection<String>) {
-        channelIds.filter { asked.add(it) }.forEach { id ->
-            scope.launch {
-                val name = gate.withPermit { withContext(Dispatchers.IO) { runCatching { fetch(id) } } }
-                name.onSuccess { if (it != null) known[id] = it }
-                    // A network failure may pass; let a later page ask again.
-                    .onFailure { asked.remove(id) }
-            }
-        }
+        // No-op: author.displayName is extracted directly from the JSON payload.
     }
-
-    private fun fetch(channelId: String): String? {
-        val request = Request.Builder()
-            .url("https://www.youtube.com/feeds/videos.xml?channel_id=$channelId")
-            .header("User-Agent", Net.USER_AGENT)
-            .build()
-        Net.client.newCall(request).execute().use { r ->
-            // Removed or hidden channels have no feed: no name, and no point asking again.
-            if (r.code == 404) return null
-            if (!r.isSuccessful) throw IOException("feed ${r.code}")
-            val source = r.body?.source() ?: return null
-            // The title is in the first few hundred bytes; closing drops the rest unread.
-            source.request(HEAD_BYTES)
-            return parseTitle(source.buffer.readByteString(minOf(source.buffer.size, HEAD_BYTES)).utf8())
-        }
-    }
-
-    internal fun parseTitle(xml: String): String? = TITLE.find(xml)?.groupValues?.get(1)?.let(::unescape)?.trim()?.ifBlank { null }
-
-    private fun unescape(s: String) = s.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"")
-        .replace("&#39;", "'").replace("&apos;", "'").replace("&amp;", "&")
 }
 
 /** What the comments show as the author: the real name once known, else the @handle. */
-fun Comment.displayName(): String = name ?: channelId?.let { ChannelNames.known[it] } ?: author
+fun Comment.displayName(): String = name ?: author
 
 /**
  * Channel pictures for feed rows that only name the uploader (Watch later / playlistVideoRenderer).

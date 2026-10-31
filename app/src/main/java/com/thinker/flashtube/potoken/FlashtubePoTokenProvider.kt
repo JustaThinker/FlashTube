@@ -20,7 +20,7 @@ class FlashtubePoTokenProvider(private val generator: PoTokenGenerator) : PoToke
                 res.playerRequestPoToken,
                 res.streamingDataPoToken
             )
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.w(TAG, "Failed to generate PoToken for $videoId: ${e.message}")
             null
         }

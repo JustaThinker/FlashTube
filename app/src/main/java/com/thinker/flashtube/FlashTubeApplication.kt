@@ -56,9 +56,8 @@ class FlashTubeApplication : Application(), ImageLoaderFactory {
         )
     }
 
-    // Thumbnails are in every list and the player; a short crossfade replaces pop-in.
+    // Instant canvas drawing during fast list scrolling prevents painter animation tick overhead while flinging.
     override fun newImageLoader(): ImageLoader = ImageLoader.Builder(this)
-        .crossfade(180)
         .memoryCache { MemoryCache.Builder(this).maxSizePercent(0.25).build() }
         .build()
 }

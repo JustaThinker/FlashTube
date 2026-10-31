@@ -34,8 +34,8 @@ class ChunkedStreamDataSource private constructor(
     }
 
     companion object {
-        private const val CHUNK_SIZE_BYTES = 10L * 1024 * 1024
-        private const val CONNECT_TIMEOUT_MS = 15_000
+        private const val CHUNK_SIZE_BYTES = 20L * 1024 * 1024
+        private const val CONNECT_TIMEOUT_MS = 10_000
         private const val READ_TIMEOUT_MS = 15_000
         private const val UNSET = C.LENGTH_UNSET.toLong()
 

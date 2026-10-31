@@ -90,8 +90,11 @@ object SeenStore {
             changed = true
         }
         if (changed) {
-            runCatching {
-                prefs.edit().putString(KEY_SEEN, set.joinToString(",")).apply()
+            val snapshot = set.joinToString(",")
+            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                runCatching {
+                    prefs.edit().putString(KEY_SEEN, snapshot).apply()
+                }
             }
         }
     }
@@ -365,7 +368,10 @@ class FeedState(
         chipsLoading = false
         job?.cancel()
         job = scope.launch {
-            runCatching { withMixMetadata(loader(null)) }
+            runCatching {
+                kotlinx.coroutines.withTimeoutOrNull(20_000L) { withMixMetadata(loader(null)) }
+                    ?: throw java.io.IOException("Request timed out. Check your connection.")
+            }
                 .onSuccess {
                     cachedFallback = null
                     videos = it.videos; next = it.next; generation++
@@ -406,7 +412,10 @@ class FeedState(
         if (loading) return
         loading = true
         job = scope.launch {
-            runCatching { withMixMetadata(loader(token)) }
+            runCatching {
+                kotlinx.coroutines.withTimeoutOrNull(20_000L) { withMixMetadata(loader(token)) }
+                    ?: throw java.io.IOException("Request timed out. Check your connection.")
+            }
                 .onSuccess { page ->
                     val seen = videos.mapTo(HashSet()) { it.feedKey }
                     val added = page.videos.filter { seen.add(it.feedKey) }
@@ -686,15 +695,16 @@ fun FeedList(
     val list = rememberScrollToTop(scrollToTop)
     // Fresh content always starts at the top (first load and every refresh).
     LaunchedEffect(feed.generation, filterScrollKey) { list.scrollToItem(0) }
-    val nearEnd by remember {
-        derivedStateOf {
-            val last = list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-            last >= list.layoutInfo.totalItemsCount - 4
-        }
-    }
-    LaunchedEffect(nearEnd, listVideos.size) {
-        if (nearEnd && listVideos.isNotEmpty()) {
-            if (onLoadMore != null) onLoadMore() else feed.loadMore()
+    // Endless feed: ask for the next page whenever the last visible item is near the end.
+    // Driven via snapshotFlow to prevent re-evaluating layoutInfo on every scroll frame.
+    LaunchedEffect(list, listVideos.size) {
+        androidx.compose.runtime.snapshotFlow {
+            val info = list.layoutInfo
+            (info.visibleItemsInfo.lastOrNull()?.index ?: -1) to info.totalItemsCount
+        }.collect { (lastVisible, totalCount) ->
+            if (totalCount > 0 && lastVisible >= totalCount - 4 && listVideos.isNotEmpty()) {
+                if (onLoadMore != null) onLoadMore() else feed.loadMore()
+            }
         }
     }
     PullToRefresh(enabled = pullToRefresh, refreshing = feed.refreshing, onRefresh = onRefresh ?: { feed.refresh() }, topPadding = indicatorTop) {
@@ -715,7 +725,18 @@ fun FeedList(
                 }
             }
         } else {
-            items(listVideos, key = { it.feedKey }) { video ->
+            items(
+                items = listVideos,
+                key = { it.feedKey },
+                contentType = { video ->
+                    when {
+                        video.feedPost != null -> "community_post"
+                        video.mixPlaylistId != null -> "mix_card"
+                        useCompactRows -> "compact_video"
+                        else -> "video_card"
+                    }
+                }
+            ) { video ->
                 if (video.feedPost != null) {
                     CommunityPostCard(video.feedPost)
                 } else if (video.mixPlaylistId != null) {

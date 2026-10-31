@@ -1,11 +1,11 @@
 package com.thinker.flashtube.potoken
 
+import android.os.Looper
 import android.util.Log
 import android.webkit.CookieManager
 import com.thinker.flashtube.FlashTubeApplication
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
@@ -26,7 +26,7 @@ class PoTokenGenerator {
 
   fun initialize() {
     if (!webViewSupported || webViewBadImpl) return
-    kotlinx.coroutines.GlobalScope.launch(Dispatchers.Main) {
+    GlobalScope.launch(Dispatchers.Main) {
       try {
         webPoTokenGenLock.withLock {
           if (webPoTokenGenerator == null) {
@@ -37,7 +37,7 @@ class PoTokenGenerator {
             webPoTokenStreamingPot = webPoTokenGenerator!!.generatePoToken(webPoTokenSessionId!!)
           }
         }
-      } catch (e: Exception) {
+      } catch (e: Throwable) {
         Log.e(TAG, "Failed to pre-initialize PoTokenWebView", e)
       }
     }
@@ -45,9 +45,12 @@ class PoTokenGenerator {
 
   fun getWebClientPoToken(videoId: String, sessionId: String): PoTokenResult? {
     Log.d(TAG, "getWebClientPoToken called: videoId=$videoId, sessionId=$sessionId")
-    Log.d(TAG, "WebView state: supported=$webViewSupported, badImpl=$webViewBadImpl")
     if (!webViewSupported || webViewBadImpl) {
-      Log.d(TAG, "WebView not available: supported=$webViewSupported, badImpl=$webViewBadImpl")
+      return null
+    }
+
+    if (Looper.myLooper() == Looper.getMainLooper()) {
+      Log.w(TAG, "getWebClientPoToken called on Main thread; skipping to avoid deadlock")
       return null
     }
 
@@ -58,36 +61,38 @@ class PoTokenGenerator {
           getWebClientPoToken(videoId, sessionId, forceRecreate = false)
         }
       }
-    } catch (e: TimeoutCancellationException) {
-      Log.w(TAG, "poToken generation timed out after ${POTOKEN_TIMEOUT_MS}ms; proceeding without PoToken")
-      runBlocking {
+    } catch (e: Throwable) {
+      Log.w(TAG, "poToken generation failed: ${e.javaClass.simpleName}: ${e.message}")
+      if (e is BadWebViewException) {
+        Log.e(TAG, "Could not obtain poToken because WebView is broken", e)
+        webViewBadImpl = true
+      }
+      cleanupWebViewAsync()
+      null
+    }
+  }
+
+  private fun cleanupWebViewAsync() {
+    GlobalScope.launch(Dispatchers.Main) {
+      try {
         webPoTokenGenLock.withLock {
           try {
-            withContext(Dispatchers.Main) { webPoTokenGenerator?.close() }
+            webPoTokenGenerator?.close()
           } catch (closeEx: Exception) {
-            Log.e(TAG, "Exception closing PoTokenWebView during timeout cleanup", closeEx)
+            Log.e(TAG, "Exception closing PoTokenWebView during cleanup", closeEx)
           }
           webPoTokenGenerator = null
           webPoTokenStreamingPot = null
           webPoTokenSessionId = null
         }
-      }
-      null
-    } catch (e: Exception) {
-      Log.e(TAG, "poToken generation exception: ${e.javaClass.simpleName}: ${e.message}", e)
-      when (e) {
-        is BadWebViewException -> {
-          Log.e(TAG, "Could not obtain poToken because WebView is broken", e)
-          webViewBadImpl = true
-          null
-        }
-        else -> throw e // includes PoTokenException
+      } catch (e: Throwable) {
+        Log.e(TAG, "Error in cleanupWebViewAsync", e)
       }
     }
   }
 
   private companion object {
-    const val POTOKEN_TIMEOUT_MS = 8_000L
+    const val POTOKEN_TIMEOUT_MS = 5_000L
   }
 
   private suspend fun getWebClientPoToken(

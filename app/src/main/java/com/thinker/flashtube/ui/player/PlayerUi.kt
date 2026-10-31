@@ -8,6 +8,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.IntOffset
 import kotlin.math.roundToInt
@@ -199,16 +200,7 @@ fun PlayerScreen(
         }
     }
 
-    // Live frame sampling: sample the TextureView ~1s per second while playing
-    LaunchedEffect(state.isPlaying, state.expanded) {
-        if (!state.isPlaying || !state.expanded || !AmbientMode.enabled) return@LaunchedEffect
-        while (true) {
-            kotlinx.coroutines.delay(1000)
-            if (!state.isPlaying || !state.expanded || !AmbientMode.enabled) break
-            val sampled = SharedVideoTexture.sampleAmbientColor()
-            if (sampled != null && sampled != dominantColor) dominantColor = sampled
-        }
-    }
+
 
     val isDark = c.surface.luminance() < 0.4f
     val ambientColor by animateColorAsState(
@@ -279,15 +271,16 @@ fun PlayerScreen(
                 // from catching touches meant for the mini-player.
                 if (!showDetails) Spacer(Modifier.weight(1f)) else {
                     val related = details?.related.orEmpty()
-                    val nearEndRelated by remember {
-                        derivedStateOf {
-                            val last = relatedListState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-                            last >= relatedListState.layoutInfo.totalItemsCount - 3
-                        }
-                    }
-                    LaunchedEffect(nearEndRelated, related.size) {
-                        if (nearEndRelated && related.isNotEmpty()) {
-                            state.loadMoreRelated()
+                    // Endless related videos feed: ask for the next page when reaching the end.
+                    // Driven via snapshotFlow to avoid evaluating layoutInfo on every scroll frame.
+                    LaunchedEffect(relatedListState, related.size) {
+                        snapshotFlow {
+                            val info = relatedListState.layoutInfo
+                            (info.visibleItemsInfo.lastOrNull()?.index ?: -1) to info.totalItemsCount
+                        }.collect { (lastVisible, totalCount) ->
+                            if (totalCount > 0 && lastVisible >= totalCount - 3 && related.isNotEmpty()) {
+                                state.loadMoreRelated()
+                            }
                         }
                     }
 

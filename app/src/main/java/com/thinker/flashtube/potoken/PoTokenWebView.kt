@@ -296,13 +296,17 @@ private constructor(
               .toHeaders()
           )
           .url(url)
-      val response =
+      val response = try {
         withContext(Dispatchers.IO) { httpClient.newCall(requestBuilder.build()).execute() }
+      } catch (e: Exception) {
+        onInitializationErrorCloseAndCancel(PoTokenException("Botguard HTTP request failed: ${e.message}"))
+        return@launch
+      }
       val httpCode = response.code
       if (httpCode != 200) {
         onInitializationErrorCloseAndCancel(PoTokenException("Invalid response code: $httpCode"))
       } else {
-        val body = withContext(Dispatchers.IO) { response.body!!.string() }
+        val body = withContext(Dispatchers.IO) { response.body?.string().orEmpty() }
         handleResponseBody(body)
       }
     }
@@ -310,7 +314,7 @@ private constructor(
 
   private fun onInitializationErrorCloseAndCancel(error: Throwable) {
     close()
-    continuation.resumeWithException(error)
+    runCatching { continuation.resumeWithException(error) }
   }
 
   @MainThread

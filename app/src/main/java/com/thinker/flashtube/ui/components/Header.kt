@@ -15,7 +15,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -36,6 +38,8 @@ import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 
+import androidx.compose.runtime.mutableFloatStateOf
+
 /**
  * A screen header that gets out of the way: it slides up exactly as far as the list scrolls
  * down, comes straight back on any upward scroll, and on release settles fully shown or
@@ -54,35 +58,52 @@ fun CollapsingHeaderLayout(
     val density = LocalDensity.current
     val c = MaterialTheme.colorScheme
     val reduced = rememberReducedMotion()
-    val scope = rememberCoroutineScope()
     var headerPx by remember { mutableIntStateOf(0) }
-    /** 0 = fully shown, -headerPx = fully hidden. */
-    val offset = remember { Animatable(0f) }
+    var offsetPx by remember { mutableFloatStateOf(0f) }
+    val animatable = remember { Animatable(0f) }
+    var isAnimating by remember { mutableStateOf(false) }
+
     val settleSpec = spring<Float>(dampingRatio = 0.9f, stiffness = 420f)
 
-    LaunchedEffect(resetKey) { if (reduced) offset.snapTo(0f) else offset.animateTo(0f, settleSpec) }
+    LaunchedEffect(resetKey) {
+        isAnimating = true
+        if (reduced) animatable.snapTo(0f) else animatable.animateTo(0f, settleSpec)
+        offsetPx = 0f
+        isAnimating = false
+    }
 
     val connection = remember(reduced) {
         object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (isAnimating) {
+                    isAnimating = false
+                    offsetPx = animatable.value
+                }
+                return Offset.Zero
+            }
+
             override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
                 val h = headerPx.toFloat()
                 if (h <= 0f) return Offset.Zero
                 val delta = if (consumed.y != 0f) consumed.y else if (available.y > 0f) available.y else 0f
                 if (delta == 0f) return Offset.Zero
-                val current = offset.value
-                val target = (current + delta).coerceIn(-h, 0f)
-                if (target != current) {
-                    scope.launch { offset.snapTo(target) }
+                val target = (offsetPx + delta).coerceIn(-h, 0f)
+                if (target != offsetPx) {
+                    offsetPx = target
                 }
                 return Offset.Zero
             }
 
             override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
                 val h = headerPx.toFloat()
-                val v = offset.value
+                val v = offsetPx
                 if (h > 0f && v < 0f && v > -h) {
                     val target = if (v < -h / 2f) -h else 0f
-                    if (reduced) offset.snapTo(target) else offset.animateTo(target, settleSpec)
+                    animatable.snapTo(offsetPx)
+                    isAnimating = true
+                    if (reduced) animatable.snapTo(target) else animatable.animateTo(target, settleSpec)
+                    offsetPx = target
+                    isAnimating = false
                 }
                 return Velocity.Zero
             }
@@ -100,7 +121,11 @@ fun CollapsingHeaderLayout(
                 .align(Alignment.TopCenter)
                 .fillMaxWidth()
                 .height((statusTop + 72.dp) / 2)
-                .graphicsLayer { alpha = if (headerPx > 0) (-offset.value / headerPx).coerceIn(0f, 1f) else 0f }
+                .graphicsLayer {
+                    val h = headerPx.toFloat()
+                    val curr = if (isAnimating) animatable.value else offsetPx
+                    alpha = if (h > 0) (-curr / h).coerceIn(0f, 1f) else 0f
+                }
                 .drawBehind { drawRect(vignette) },
         )
         Box(
@@ -108,9 +133,10 @@ fun CollapsingHeaderLayout(
                 .fillMaxWidth()
                 .onSizeChanged { headerPx = it.height }
                 .graphicsLayer {
-                    translationY = offset.value
-                    // Eases out as it leaves, so the edge never reads as a hard sliding slab.
-                    alpha = if (headerPx > 0) 1f - 0.5f * (-offset.value / headerPx).coerceIn(0f, 1f) else 1f
+                    val h = headerPx.toFloat()
+                    val curr = if (isAnimating) animatable.value else offsetPx
+                    translationY = curr
+                    alpha = if (h > 0) 1f - 0.5f * (-curr / h).coerceIn(0f, 1f) else 1f
                 }
                 .background(c.surface),
         ) { header() }

@@ -196,7 +196,11 @@ class CommentsState(private val scope: CoroutineScope) {
         job?.cancel()
         liveJob?.cancel()
         job = scope.launch {
-            runCatching { if (live) CommentFeed.firstLive(id) else CommentFeed.first(id) }
+            runCatching {
+                kotlinx.coroutines.withTimeoutOrNull(15_000L) {
+                    if (live) CommentFeed.firstLive(id) else CommentFeed.first(id)
+                } ?: throw java.io.IOException("Comments request timed out.")
+            }
                 .onSuccess { page ->
                     if (videoId != id) return@onSuccess
                     comments = page.comments
@@ -255,7 +259,10 @@ class CommentsState(private val scope: CoroutineScope) {
         if (loading) return
         loading = true
         job = scope.launch {
-            runCatching { CommentFeed.more(page) }
+            runCatching {
+                kotlinx.coroutines.withTimeoutOrNull(15_000L) { CommentFeed.more(page) }
+                    ?: throw java.io.IOException("Comments request timed out.")
+            }
                 .onSuccess { more ->
                     if (videoId != id) return@onSuccess
                     // Pages can overlap at the boundary; keep ids unique for the list keys.

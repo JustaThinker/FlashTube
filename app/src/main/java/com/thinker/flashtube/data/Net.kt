@@ -97,8 +97,10 @@ object Net {
 
     val client: OkHttpClient by lazy {
         OkHttpClient.Builder()
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
+            .writeTimeout(15, TimeUnit.SECONDS)
+            .callTimeout(20, TimeUnit.SECONDS)
             .addInterceptor { chain ->
                 val host = chain.request().url.host
                 val isYouTubeRequest = host == "youtube.com" || host.endsWith(".youtube.com") ||

@@ -87,7 +87,7 @@ fun LibraryScreen(
                             contentPadding = PaddingValues(horizontal = 16.dp),
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
-                            items(history.take(20), key = { "h-" + it.id }) { video -> HistoryCard(video) { onOpen(video) } }
+                            items(history.take(20), key = { "h-" + it.id }, contentType = { "history_card" }) { video -> HistoryCard(video) { onOpen(video) } }
                         }
                         lib.history.loading -> Box(Modifier.fillMaxWidth().padding(24.dp), Alignment.Center) {
                             CircularProgressIndicator(color = MaterialTheme.colorScheme.primary, strokeWidth = 4.dp, modifier = Modifier.size(28.dp))
@@ -104,7 +104,7 @@ fun LibraryScreen(
                     PlaylistRef("WL", "Watch later", null, null),
                     PlaylistRef("LL", "Liked videos", null, null),
                 )
-                items((pinned + lib.playlists).chunked(2), key = { row -> row.joinToString { it.id } }) { row ->
+                items((pinned + lib.playlists).chunked(2), key = { row -> row.joinToString { it.id } }, contentType = { "playlist_pair" }) { row ->
                     Row(Modifier.padding(horizontal = 16.dp, vertical = 5.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         row.forEach { pl -> PlaylistTile(pl, Modifier.weight(1f)) { onOpenPlaylist(pl) } }
                         if (row.size == 1) Spacer(Modifier.weight(1f))

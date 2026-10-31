@@ -250,7 +250,7 @@ private fun SubscriptionsChannelStrip(
             .padding(top = 2.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        items(sortedChannels, key = { it.id }) { ch ->
+        items(sortedChannels, key = { it.id }, contentType = { "channel_avatar" }) { ch ->
             val selected = ch.id == selectedId
             val isLiveNow = ch.isLive ||
                 ch.id.lowercase() in liveChannelNamesOrIds ||
@@ -489,7 +489,7 @@ fun AllSubscriptionsScreen(
             }
 
             LazyColumn(contentPadding = contentPadding) {
-                items(filteredSortedChannels, key = { it.id }) { ch ->
+                items(filteredSortedChannels, key = { it.id }, contentType = { "channel_row" }) { ch ->
                     val bell = bellStates[ch.id] ?: BellLevel.PERSONALIZED
                     SubscriptionChannelRow(
                         channel = ch,
