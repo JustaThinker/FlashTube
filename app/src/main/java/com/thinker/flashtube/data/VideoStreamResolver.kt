@@ -1,18 +1,23 @@
 package com.thinker.flashtube.data
 
+import android.content.Context
 import android.util.Log
-import com.thinker.flashtube.Account
 import com.thinker.flashtube.Net
 import com.thinker.flashtube.StreamCache
-import kotlinx.coroutines.CompletableDeferred
+import com.thinker.flashtube.data.stream.BotCheckVerdict
+import com.thinker.flashtube.data.stream.PlayerApi
+import com.thinker.flashtube.data.stream.PlayerSession
+import com.thinker.flashtube.data.stream.STREAM_TAG
+import com.thinker.flashtube.data.stream.StreamProbe
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONArray
 import org.json.JSONObject
-import java.net.URLDecoder
+import org.schabi.newpipe.extractor.ServiceList
+import org.schabi.newpipe.extractor.stream.AudioStream
+import org.schabi.newpipe.extractor.stream.AudioTrackType
+import org.schabi.newpipe.extractor.stream.StreamType
 import java.util.concurrent.ConcurrentHashMap
 
 data class ResolvedStreamVariant(
@@ -26,7 +31,6 @@ data class ResolvedStreamVariant(
     val isHls: Boolean = false,
     val isHdr: Boolean = false,
     val loudnessDb: Float? = null,
-    /** YouTube marks the creator's soundtrack as default even when a dub has a higher bitrate. */
     val isOriginalAudio: Boolean = false,
     val audioTrackName: String? = null,
 )
@@ -48,89 +52,255 @@ data class PickedStreams(
     val hlsUrl: String? = null
 )
 
-object VideoStreamResolutionCache {
-    private const val TAG = "VideoStreamResCache"
-    private val cache = ConcurrentHashMap<String, ResolvedStreamLadder>()
-    private val inFlight = ConcurrentHashMap<String, CompletableDeferred<ResolvedStreamLadder>>()
-
-    fun getOrLoad(videoId: String, loader: suspend (String) -> ResolvedStreamLadder): suspend () -> ResolvedStreamLadder = {
-        val now = System.currentTimeMillis()
-        val cached = cache[videoId]
-        if (cached != null && cached.expiresAtMs > now) {
-            cached
-        } else {
-            var deferred = inFlight[videoId]
-            var isOwner = false
-            if (deferred == null) {
-                val newDeferred = CompletableDeferred<ResolvedStreamLadder>()
-                val existing = inFlight.putIfAbsent(videoId, newDeferred)
-                if (existing == null) {
-                    deferred = newDeferred
-                    isOwner = true
-                } else {
-                    deferred = existing
-                }
-            }
-
-            if (isOwner) {
-                try {
-                    val result = loader(videoId)
-                    cache[videoId] = result
-                    deferred.complete(result)
-                    result
-                } catch (e: Exception) {
-                    deferred.completeExceptionally(e)
-                    throw e
-                } finally {
-                    inFlight.remove(videoId, deferred)
-                }
-            } else {
-                deferred.await()
-            }
-        }
-    }
-
-    fun clear() {
-        Log.i(TAG, "Clearing all resolved stream ladders from cache")
-        cache.clear()
-    }
-
-    fun invalidate(videoId: String) {
-        Log.i(TAG, "Invalidating resolved stream ladder for $videoId")
-        cache.remove(videoId)
-    }
-}
-
 object VideoStreamResolver {
     private const val TAG = "VideoStreamResolver"
     private val prefetcher = java.util.concurrent.Executors.newFixedThreadPool(4)
     private val prefetching = ConcurrentHashMap.newKeySet<String>()
 
-    fun prefetch(videoId: String) {
+    @Volatile
+    private var sessionInstance: PlayerSession? = null
+
+    fun getPlayerSession(context: Context): PlayerSession {
+        return sessionInstance ?: synchronized(this) {
+            sessionInstance ?: run {
+                val identity = VisitorIdentity.init(context)
+                val probe = StreamProbe(Net.client, Net.USER_AGENT)
+                val api = PlayerApi(Net.client)
+                PlayerSession(identity, api, probe).also { sessionInstance = it }
+            }
+        }
+    }
+
+    fun prefetch(videoId: String) = prefetch(com.thinker.flashtube.FlashTubeApplication.appContext, videoId)
+
+    fun prefetch(context: Context, videoId: String) {
         if (!prefetching.add(videoId)) return
         prefetcher.execute {
             try {
-                runCatching { kotlinx.coroutines.runBlocking { resolve(videoId) } }
+                runCatching { runBlocking { resolve(context, videoId) } }
             } finally {
                 prefetching.remove(videoId)
             }
         }
     }
 
-    suspend fun resolve(videoId: String): ResolvedStreamLadder = withContext(Dispatchers.IO) {
-        VideoStreamResolutionCache.getOrLoad(videoId) { id ->
-            val visionStartedAt = android.os.SystemClock.elapsedRealtime()
-            val visionOs = resolveVisionOS(id)
-            Log.i(TAG, "VISIONOS resolution ${if (visionOs == null) "miss" else "hit"} for $id in ${android.os.SystemClock.elapsedRealtime() - visionStartedAt}ms")
-            visionOs ?: run {
-                val fallbackStartedAt = android.os.SystemClock.elapsedRealtime()
-                try {
-                    resolveFallback(id)
-                } finally {
-                    Log.i(TAG, "NewPipe fallback finished for $id in ${android.os.SystemClock.elapsedRealtime() - fallbackStartedAt}ms")
+    suspend fun getVideoStreamResult(
+        videoId: String,
+        includeHdr: Boolean = false
+    ): VideoStreamResult = getVideoStreamResult(com.thinker.flashtube.FlashTubeApplication.appContext, videoId, includeHdr)
+
+    suspend fun getVideoStreamResult(
+        context: Context,
+        videoId: String,
+        includeHdr: Boolean = false
+    ): VideoStreamResult = VideoStreamResolutionCache.getOrResolve(videoId, includeHdr) {
+        resolveVideoStreamResult(context, videoId, includeHdr)
+    }
+
+    suspend fun resolve(videoId: String): ResolvedStreamLadder = resolve(com.thinker.flashtube.FlashTubeApplication.appContext, videoId)
+
+    suspend fun resolve(context: Context, videoId: String): ResolvedStreamLadder = withContext(Dispatchers.IO) {
+        val result = getVideoStreamResult(context, videoId)
+        val videoVariants = result.qualities.map {
+            ResolvedStreamVariant(
+                url = it.url,
+                mimeType = if (it.format.equals("HLS", ignoreCase = true)) "application/x-mpegURL" else "video/${it.format}",
+                qualityLabel = it.resolution,
+                height = it.height,
+                width = it.width,
+                fps = it.frameRate,
+                bitrate = 0L,
+                isHls = it.format.equals("HLS", ignoreCase = true),
+                isHdr = it.isHdr,
+            )
+        }
+        val audioVariants = result.qualities.filter { it.audioUrl != null }.map {
+            ResolvedStreamVariant(
+                url = it.audioUrl!!,
+                mimeType = "audio/mp4",
+                qualityLabel = "Audio",
+                height = 0,
+                width = 0,
+                fps = 0,
+                bitrate = 128000L,
+                isOriginalAudio = true
+            )
+        }.distinctBy { it.url }
+
+        val expiresAtMs = System.currentTimeMillis() + 4 * 3600 * 1000L
+        ResolvedStreamLadder(
+            videoId = videoId,
+            title = "",
+            durationSec = 0L,
+            videoStreams = videoVariants.sortedByDescending { it.height },
+            audioStreams = audioVariants,
+            expiresAtMs = expiresAtMs,
+            isLive = result.qualities.any { it.isLive }
+        )
+    }
+
+    private suspend fun resolveVideoStreamResult(
+        context: Context,
+        videoId: String,
+        includeHdr: Boolean = false,
+    ): VideoStreamResult = withContext(Dispatchers.IO) {
+        val playerSession = getPlayerSession(context)
+        val direct = playerSession.visionOsVetted(videoId) { streamingData ->
+            val adaptive = streamingData.optJSONArray("adaptiveFormats")
+            if (adaptive != null) {
+                for (i in 0 until adaptive.length()) {
+                    val format = adaptive.optJSONObject(i) ?: continue
+                    if (format.optString("mimeType").startsWith("audio/")) {
+                        val url = format.optString("url")
+                        if (url.isNotEmpty()) return@visionOsVetted url
+                    }
                 }
             }
-        }()
+            null
+        }
+
+        direct.answer?.let { answer ->
+            val qualities = parseDirectVideoQualities(answer.streamingData, includeHdr)
+            if (qualities.isNotEmpty()) {
+                BotCheckVerdict.clearOnSuccess()
+                Log.i(
+                    STREAM_TAG,
+                    "Video qualities via visionOS: ${qualities.size} for $videoId" +
+                        qualities.count(VideoQuality::isHdr).let { if (it > 0) " (HDR=$it)" else "" },
+                )
+                val audioTracks = if (qualities.any(VideoQuality::isLive)) {
+                    emptyList()
+                } else {
+                    parseDirectAudioTracks(answer.streamingData)
+                }
+                val seekPreview = runCatching { parseStoryboardSeekPreview(answer.root) }.getOrNull()
+                return@withContext VideoStreamResult(qualities, seekPreview, audioTracks)
+            }
+            Log.w(STREAM_TAG, "visionOS answered with no usable formats for $videoId")
+        }
+
+        var newPipeBotChecked = false
+        try {
+            val extracted = getVideoStreamsFromNewPipe(videoId)
+            if (extracted.qualities.isNotEmpty()) {
+                BotCheckVerdict.clearOnSuccess()
+                Log.i(
+                    STREAM_TAG,
+                    "Video qualities via NewPipe fallback: ${extracted.qualities.size} for $videoId",
+                )
+                return@withContext extracted
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(
+                STREAM_TAG,
+                "NewPipe quality resolution failed, falling back to direct InnerTube",
+                e,
+            )
+        }
+
+        try {
+            val streamingData = playerSession.nativeFallback(videoId, newPipeBotChecked)?.streamingData
+            if (streamingData != null) {
+                val qualities = parseDirectVideoQualities(streamingData, includeHdr)
+                return@withContext VideoStreamResult(qualities)
+            }
+            VideoStreamResult(emptyList())
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e(STREAM_TAG, "Error getting video stream qualities", e)
+            VideoStreamResult(emptyList())
+        }
+    }
+
+    private fun getVideoStreamsFromNewPipe(videoId: String): VideoStreamResult {
+        val extractor = ServiceList.YouTube.getStreamExtractor("https://www.youtube.com/watch?v=$videoId")
+        extractor.fetchPage()
+
+        val videoOnlyStreams = extractor.videoOnlyStreams
+        val muxedStreams = extractor.videoStreams
+        val isLiveStream = extractor.streamType == StreamType.LIVE_STREAM ||
+            extractor.streamType == StreamType.AUDIO_LIVE_STREAM
+        val sourceAspect = (videoOnlyStreams + muxedStreams)
+            .filter { it.width > 0 && it.height > 0 }
+            .maxByOrNull { it.height }
+            ?.let { it.width.toFloat() / it.height.toFloat() }
+
+        val extractedAudioStreams = extractor.audioStreams
+        val qualities = mutableListOf<VideoQuality>()
+        val manifest = if (isLiveStream) {
+            extractor.hlsUrl?.takeIf { it.isNotBlank() }?.let { "HLS" to it }
+        } else {
+            extractor.dashMpdUrl?.takeIf { it.isNotBlank() }?.let { "DASH" to it }
+                ?: extractor.hlsUrl?.takeIf { it.isNotBlank() }?.let { "HLS" to it }
+        }
+        manifest?.let { (format, url) ->
+            qualities.add(
+                VideoQuality(
+                    resolution = if (format == "HLS") "Auto (HLS)" else "Auto (Best)",
+                    url = url,
+                    format = format,
+                    isDASH = true,
+                    isLive = isLiveStream,
+                    sourceAspectRatio = sourceAspect,
+                )
+            )
+        }
+
+        if (isLiveStream) return VideoStreamResult(qualities)
+
+        val bestAudio = extractedAudioStreams
+            .asSequence()
+            .filter { it.isUrl }
+            .maxWithOrNull(
+                compareBy<AudioStream>(
+                    {
+                        if (it.format?.suffix.equals("m4a", ignoreCase = true) ||
+                            it.codec?.contains("mp4a", ignoreCase = true) == true
+                        ) 1 else 0
+                    },
+                    { it.averageBitrate },
+                )
+            )
+
+        if (bestAudio != null) {
+            videoOnlyStreams.asSequence()
+                .filter { it.isUrl }
+                .mapNotNull { stream ->
+                    stream.resolution?.takeIf { it.isNotBlank() }?.let { resolution ->
+                        VideoQuality(
+                            resolution = resolution,
+                            url = stream.content,
+                            format = stream.format?.suffix ?: "mp4",
+                            isDASH = false,
+                            audioUrl = bestAudio.content,
+                            sourceAspectRatio = sourceAspect,
+                            codec = stream.codec,
+                        )
+                    }
+                }
+                .forEach(qualities::add)
+        }
+
+        muxedStreams.asSequence()
+            .filter { it.isUrl }
+            .mapNotNull { stream ->
+                stream.resolution?.takeIf { it.isNotBlank() }?.let { resolution ->
+                    VideoQuality(
+                        resolution = resolution,
+                        url = stream.content,
+                        format = stream.format?.suffix ?: "mp4",
+                        isDASH = false,
+                        sourceAspectRatio = sourceAspect,
+                        codec = stream.codec,
+                    )
+                }
+            }
+            .forEach(qualities::add)
+
+        return VideoStreamResult(deduplicateVideoQualityVariants(qualities))
     }
 
     fun pickBestStreams(
@@ -159,7 +329,6 @@ object VideoStreamResolver {
         } else if (targetQualityHeight != null) {
             videoStreams.minByOrNull { kotlin.math.abs(it.height - targetQualityHeight) } ?: videoStreams.first()
         } else {
-            // Auto quality ceiling: 720p on metered (cellular) networks to save data, 1080p on unmetered (Wi-Fi)
             val autoCeiling = if (isMetered) 720 else 1080
             videoStreams.filter { it.height <= autoCeiling }.maxByOrNull { it.height }
                 ?: videoStreams.minByOrNull { it.height }
@@ -174,234 +343,6 @@ object VideoStreamResolver {
         return PickedStreams(
             video = bestVideo,
             audio = bestAudio,
-            isLive = false
-        )
-    }
-
-    private fun resolveVisionOS(videoId: String): ResolvedStreamLadder? {
-        return try {
-            val clientContext = JSONObject().apply {
-                put("client", JSONObject().apply {
-                    put("clientName", "VISIONOS")
-                    put("clientVersion", "1.0.3")
-                    put("platform", "OSX")
-                    put("osName", "Macintosh")
-                    put("osVersion", "14.3.0")
-                })
-            }
-            val payload = JSONObject().apply {
-                put("context", clientContext)
-                put("videoId", videoId)
-            }
-
-            VisitorIdentity.cachedOrNull()?.let { visitor ->
-                clientContext.getJSONObject("client").put("visitorData", visitor)
-            }
-
-            val requestBuilder = Request.Builder()
-                .url("https://www.youtube.com/youtubei/v1/player")
-                .post(payload.toString().toRequestBody("application/json".toMediaType()))
-                .addHeader("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Safari/605.1.15")
-
-            VisitorIdentity.cachedOrNull()?.let { visitor ->
-                requestBuilder.addHeader("X-Goog-Visitor-Id", visitor)
-            }
-
-            Net.client.newCall(requestBuilder.build()).execute().use { response ->
-                if (!response.isSuccessful) return null
-                val bodyStr = response.body?.string() ?: return null
-                val root = JSONObject(bodyStr)
-                parseVisionOsPayload(videoId, root)
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "VISIONOS stream resolution failed for $videoId", e)
-            null
-        }
-    }
-
-    private fun parseVisionOsPayload(videoId: String, root: JSONObject): ResolvedStreamLadder? {
-        val videoDetails = root.optJSONObject("videoDetails") ?: return null
-        val title = videoDetails.optString("title", "")
-        val durationSec = videoDetails.optString("lengthSeconds", "0").toLongOrNull() ?: 0L
-        val isLive = videoDetails.optBoolean("isLive", false)
-
-        val streamingData = root.optJSONObject("streamingData") ?: return null
-        val hlsManifestUrl = streamingData.optString("hlsManifestUrl").takeIf { it.isNotBlank() }
-
-        val videoStreams = mutableListOf<ResolvedStreamVariant>()
-        val audioStreams = mutableListOf<ResolvedStreamVariant>()
-
-        var earliestExpireMs = System.currentTimeMillis() + 4 * 3600 * 1000L // default 4h
-
-        if (!hlsManifestUrl.isNullOrEmpty()) {
-            videoStreams.add(
-                ResolvedStreamVariant(
-                    url = hlsManifestUrl,
-                    mimeType = "application/x-mpegURL",
-                    qualityLabel = "Live HLS",
-                    height = 1080,
-                    width = 1920,
-                    fps = 30,
-                    bitrate = 0L,
-                    isHls = true
-                )
-            )
-        } else {
-            val formats = (streamingData.optJSONArray("formats") ?: JSONArray())
-            val adaptiveFormats = (streamingData.optJSONArray("adaptiveFormats") ?: JSONArray())
-
-            for (i in 0 until formats.length()) {
-                parseFormatItem(formats.optJSONObject(i), videoStreams, audioStreams)?.let { exp ->
-                    if (exp < earliestExpireMs) earliestExpireMs = exp
-                }
-            }
-            for (i in 0 until adaptiveFormats.length()) {
-                parseFormatItem(adaptiveFormats.optJSONObject(i), videoStreams, audioStreams)?.let { exp ->
-                    if (exp < earliestExpireMs) earliestExpireMs = exp
-                }
-            }
-        }
-
-        if (videoStreams.isEmpty() && audioStreams.isEmpty()) return null
-
-        val cacheExpiresAtMs = (earliestExpireMs - 5 * 60 * 1000L).coerceAtLeast(System.currentTimeMillis() + 60 * 1000L)
-
-        return ResolvedStreamLadder(
-            videoId = videoId,
-            title = title,
-            durationSec = durationSec,
-            videoStreams = videoStreams.sortedByDescending { it.height },
-            audioStreams = audioStreams.sortedByDescending { it.bitrate },
-            expiresAtMs = cacheExpiresAtMs,
-            isLive = isLive
-        )
-    }
-
-    private fun parseFormatItem(
-        format: JSONObject?,
-        videoStreams: MutableList<ResolvedStreamVariant>,
-        audioStreams: MutableList<ResolvedStreamVariant>
-    ): Long? {
-        if (format == null) return null
-        val url = format.optString("url").takeIf { it.isNotBlank() }
-            ?: parseCipher(format.optString("signatureCipher").ifBlank { format.optString("cipher") })
-            ?: return null
-
-        val mimeType = format.optString("mimeType", "")
-        val qualityLabel = format.optString("qualityLabel", "")
-        val height = format.optInt("height", 0)
-        val width = format.optInt("width", 0)
-        val fps = format.optInt("fps", 30)
-        val bitrate = format.optLong("bitrate", 0L)
-        val itag = format.optInt("itag", 0)
-        val isHdr = itag in 330..337 || mimeType.contains("vp9.2", ignoreCase = true)
-        val audioTrack = format.optJSONObject("audioTrack")
-        val isOriginalAudio = audioTrack?.optBoolean("audioIsDefault", false) == true
-        val audioTrackName = audioTrack?.optString("displayName")?.takeIf { it.isNotBlank() }
-
-        val loudnessDb = format.optDouble("loudnessDb", Double.NaN).let {
-            if (it.isNaN()) null else it.toFloat()
-        }
-
-        val variant = ResolvedStreamVariant(
-            url = url,
-            mimeType = mimeType,
-            qualityLabel = qualityLabel,
-            height = height,
-            width = width,
-            fps = fps,
-            bitrate = bitrate,
-            isHls = false,
-            isHdr = isHdr,
-            loudnessDb = loudnessDb,
-            isOriginalAudio = isOriginalAudio,
-            audioTrackName = audioTrackName,
-        )
-
-        if (mimeType.startsWith("video/")) {
-            videoStreams.add(variant)
-        } else if (mimeType.startsWith("audio/")) {
-            audioStreams.add(variant)
-        }
-
-        return extractExpireMs(url)
-    }
-
-    private fun parseCipher(cipher: String): String? {
-        if (cipher.isBlank()) return null
-        return try {
-            val params = cipher.split('&').associate {
-                val parts = it.split('=')
-                if (parts.size == 2) URLDecoder.decode(parts[0], "UTF-8") to URLDecoder.decode(parts[1], "UTF-8") else "" to ""
-            }
-            params["url"]
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-    private fun extractExpireMs(url: String): Long? {
-        return try {
-            val expireSec = extractQueryParam(url, "expire")?.toLongOrNull() ?: return null
-            expireSec * 1000L
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-    private fun extractQueryParam(url: String, name: String): String? {
-        return try {
-            val query = url.substringAfter('?', "")
-            query.split('&').mapNotNull {
-                val parts = it.split('=')
-                if (parts.size == 2 && parts[0] == name) URLDecoder.decode(parts[1], "UTF-8") else null
-            }.firstOrNull()
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-    private fun resolveFallback(videoId: String): ResolvedStreamLadder {
-        Log.i(TAG, "Resolving stream via NewPipe fallback for $videoId")
-        // Share the UI/playback NewPipe extraction so a touch-down prefetch can satisfy
-        // this fallback instead of making a second network request.
-        val info = StreamCache.getOrLoad(videoId)
-        val videoStreams = (info.videoOnlyStreams + info.videoStreams).map {
-            ResolvedStreamVariant(
-                url = it.content ?: it.url.orEmpty(),
-                mimeType = it.format?.mimeType ?: "video/mp4",
-                qualityLabel = it.quality,
-                height = it.height,
-                width = it.width,
-                fps = it.fps,
-                bitrate = it.bitrate.toLong(),
-                isHls = false
-            )
-        }
-        val audioStreams = info.audioStreams.map {
-            ResolvedStreamVariant(
-                url = it.content ?: it.url.orEmpty(),
-                mimeType = it.format?.mimeType ?: "audio/mp4",
-                qualityLabel = "Audio",
-                height = 0,
-                width = 0,
-                fps = 0,
-                bitrate = it.bitrate.toLong(),
-                isHls = false,
-                isOriginalAudio = it.audioTrackType == org.schabi.newpipe.extractor.stream.AudioTrackType.ORIGINAL,
-                audioTrackName = it.audioTrackName
-            )
-        }
-
-        val expiresAtMs = System.currentTimeMillis() + 2 * 3600 * 1000L
-
-        return ResolvedStreamLadder(
-            videoId = videoId,
-            title = info.name.orEmpty(),
-            durationSec = info.duration,
-            videoStreams = videoStreams.sortedByDescending { it.height },
-            audioStreams = audioStreams.sortedByDescending { it.bitrate },
-            expiresAtMs = expiresAtMs,
             isLive = false
         )
     }

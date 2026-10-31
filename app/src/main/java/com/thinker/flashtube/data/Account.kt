@@ -47,8 +47,8 @@ data class ChannelRef(
 @Immutable
 data class FeedChip(
     val title: String,
-    val browseId: String?,
-    val params: String?,
+    val browseId: String? = null,
+    val params: String? = null,
     val navigationEndpoint: JSONObject? = null,
     val key: String = listOfNotNull(browseId, params, title).joinToString("|"),
     /** YouTube Home category chips currently route through continuationCommand. */
@@ -607,7 +607,29 @@ object InnerTube {
     const val CHANNEL_PLAYLISTS_TAB = "EglwbGF5bGlzdHPyBgQKAjoA"
     const val CHANNEL_COMMUNITY_TAB = "EgZjb21tdW5pdHkyBgQKACgB"
 
-    suspend fun subscriptionsFeed(next: String? = null) = browse("FEsubscriptions", next)
+    suspend fun subscriptionsFeed(next: String? = null, chip: FeedChip? = null): FeedPage = withContext(Dispatchers.IO) {
+        if (next != null) {
+            parseFeed(postAny("browse", JSONObject().put("continuation", next)))
+        } else if (chip != null) {
+            val continuation = chip.continuation
+            if (continuation != null) {
+                parseFeed(postAny("browse", JSONObject().put("continuation", continuation)))
+            } else {
+                val routeBody = JSONObject().put("browseId", chip.browseId ?: "FEsubscriptions").apply {
+                    chip.params?.takeIf { it.isNotBlank() }?.let { put("params", it) }
+                }
+                val response = try {
+                    postAny("browse", routeBody)
+                } catch (e: IOException) {
+                    if (chip.navigationEndpoint == null) throw e
+                    postAny("browse", JSONObject().put("navigationEndpoint", chip.navigationEndpoint))
+                }
+                parseFeed(response)
+            }
+        } else {
+            browse("FEsubscriptions", null)
+        }
+    }
     suspend fun history(next: String? = null) = browse("FEhistory", next)
 
     suspend fun playlist(id: String, next: String? = null, videoId: String? = null): FeedPage = withContext(Dispatchers.IO) {
@@ -674,7 +696,30 @@ object InnerTube {
             if (key == "channelRenderer" || key == "gridChannelRenderer") {
                 val id = obj.optString("channelId").ifBlank { return@walk }
                 out.getOrPut(id) {
-                    ChannelRef(id, obj.text("title") ?: "", obj.thumbnails()?.lastOrNull()?.let(::absoluteUrl))
+                    val name = obj.text("title") ?: ""
+                    val avatar = obj.thumbnails()?.lastOrNull()?.let(::absoluteUrl)
+                    val subText = obj.text("subscriberCountText")
+                    val vidText = obj.text("videoCountText")
+                    val handle = obj.text("shortBylineText") ?: obj.collectStrings("text").firstOrNull { it.startsWith("@") }
+                    val rawObj = obj.toString()
+                    val isLive = obj.optBoolean("isLive") ||
+                        obj.optBoolean("hasLive") ||
+                        rawObj.contains("BADGE_STYLE_TYPE_LIVE_NOW") ||
+                        rawObj.contains("LIVE_NOW") ||
+                        rawObj.contains("style\":\"LIVE\"") ||
+                        rawObj.contains("\"isLive\":true") ||
+                        rawObj.contains("is live", ignoreCase = true) ||
+                        obj.collectStrings("text").any {
+                            it.equals("live", ignoreCase = true) || it.contains("is live", ignoreCase = true) || it.equals("LIVE NOW", ignoreCase = true)
+                        }
+                    ChannelRef(
+                        id = id,
+                        name = name,
+                        avatar = avatar,
+                        isLive = isLive,
+                        handle = handle ?: subText,
+                        subscriberCountText = subText ?: vidText,
+                    )
                 }
             }
         }
@@ -924,7 +969,7 @@ object InnerTube {
                         }
                     }
                 }
-                "chipCloudChipRenderer" -> {
+                "chipCloudChipRenderer", "feedFilterChipRenderer", "chipRenderer", "topicChipRenderer" -> {
                     val title = (obj.text("text")
                         ?: obj.optJSONObject("accessibilityData")?.optJSONObject("accessibilityData")?.optString("label"))
                         ?.substringBefore(". Selected")?.trim().orEmpty()

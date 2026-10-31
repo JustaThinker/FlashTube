@@ -457,7 +457,9 @@ class LibraryData(scope: CoroutineScope) {
     val home: FeedState by lazy {
         FeedState(scope, freshOnRefresh = true) { next -> InnerTube.homeFeed(next, home.selectedChip) }
     }
-    val subscriptions = FeedState(scope) { InnerTube.subscriptionsFeed(it) }
+    val subscriptions: FeedState by lazy {
+        FeedState(scope, freshOnRefresh = true) { next -> InnerTube.subscriptionsFeed(next, subscriptions.selectedChip) }
+    }
     val history = FeedState(scope) { InnerTube.history(it) }
     var homePosts by mutableStateOf<List<CommunityPost>>(emptyList())
         private set

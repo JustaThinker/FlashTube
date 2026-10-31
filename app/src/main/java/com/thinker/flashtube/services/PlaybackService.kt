@@ -168,7 +168,7 @@ class PlaybackService : MediaSessionService() {
                 val resolutionStartedAt = android.os.SystemClock.elapsedRealtime()
                 val ladder = runCatching {
                     kotlinx.coroutines.runBlocking {
-                        com.thinker.flashtube.data.VideoStreamResolver.resolve(item.mediaId)
+                        com.thinker.flashtube.data.VideoStreamResolver.resolve(this@PlaybackService, item.mediaId)
                     }
                 }.getOrNull()
                 Log.i(
@@ -488,51 +488,48 @@ private class YouTubeMediaSourceFactory(private val context: Context) : MediaSou
             return ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(localMediaItem)
         }
 
-        // Fast VISIONOS stream ladder resolution (~150ms)
-        val resolutionStartedAt = android.os.SystemClock.elapsedRealtime()
-        val ladder = runCatching {
+        // Fast direct stream resolution (~100-150ms)
+        val streamResult = runCatching {
             kotlinx.coroutines.runBlocking {
-                com.thinker.flashtube.data.VideoStreamResolver.resolve(mediaItem.mediaId)
+                com.thinker.flashtube.data.VideoStreamResolver.getVideoStreamResult(context, mediaItem.mediaId)
             }
         }.getOrNull()
-        Log.i(
-            "FlashTubeTime",
-            "media source stream resolution for ${mediaItem.mediaId}: ${android.os.SystemClock.elapsedRealtime() - resolutionStartedAt}ms (success=${ladder != null})",
-        )
 
-        if (ladder != null) {
+        if (streamResult != null && streamResult.qualities.isNotEmpty()) {
+            val qualities = streamResult.qualities
             val targetHeight = QualityPreference.getEffectiveTargetHeight(context)
             val isMetered = QualityPreference.isNetworkMetered(context)
             val preferHdr = QualityPreference.preferHdr
-            val picked = com.thinker.flashtube.data.VideoStreamResolver.pickBestStreams(
-                ladder = ladder,
-                targetQualityHeight = targetHeight,
-                isMetered = isMetered,
-                preferHdr = preferHdr
-            )
-            if (picked.isLive && !picked.hlsUrl.isNullOrEmpty()) {
-                val liveItem = mediaItem.buildUpon().setUri(Uri.parse(picked.hlsUrl)).build()
-                Log.i("FlashTube", "media source ${mediaItem.mediaId}: playing live stream HLS URL ${picked.hlsUrl}")
+
+            val chosenQuality = if (targetHeight != null) {
+                qualities.minByOrNull { kotlin.math.abs(it.height - targetHeight) } ?: qualities.first()
+            } else {
+                val autoCeiling = if (isMetered) 720 else 1080
+                qualities.filter { !it.isLive && it.height <= autoCeiling }.maxByOrNull { it.height }
+                    ?: qualities.firstOrNull() ?: qualities.first()
+            }
+
+            if (chosenQuality.isLive) {
+                val liveItem = mediaItem.buildUpon().setUri(Uri.parse(chosenQuality.url)).build()
+                Log.i("FlashTube", "media source ${mediaItem.mediaId}: playing live stream HLS URL ${chosenQuality.url}")
                 return HlsMediaSource.Factory(dataSourceFactory).createMediaSource(liveItem)
             }
 
-            if (picked.video != null && picked.audio != null) {
-                Log.i("FlashTube", "media source ${mediaItem.mediaId}: playing VISIONOS video (${picked.video.height}p) + audio (${picked.audio.bitrate} bps)")
-                val videoSource = cachedProgressiveSource(
-                    mediaItem, picked.video.url, "video",
-                    "${picked.video.height}p-${picked.video.fps}-${picked.video.mimeType}",
-                )
+            val videoSource = cachedProgressiveSource(
+                mediaItem, chosenQuality.url, "video",
+                "${chosenQuality.height}p-${chosenQuality.frameRate}-${chosenQuality.format}",
+            )
+
+            val audioUrl = chosenQuality.audioUrl
+            if (audioUrl != null) {
                 val audioSource = cachedProgressiveSource(
-                    mediaItem, picked.audio.url, "audio",
-                    "${picked.audio.bitrate}-${picked.audio.mimeType}",
+                    mediaItem, audioUrl, "audio", "best-audio",
                 )
+                Log.i("FlashTube", "media source ${mediaItem.mediaId}: playing direct video (${chosenQuality.height}p) + audio")
                 return MergingMediaSource(true, true, videoSource, audioSource)
-            } else if (picked.video != null) {
-                Log.i("FlashTube", "media source ${mediaItem.mediaId}: playing VISIONOS video (${picked.video.height}p)")
-                return cachedProgressiveSource(
-                    mediaItem, picked.video.url, "video",
-                    "${picked.video.height}p-${picked.video.fps}-${picked.video.mimeType}",
-                )
+            } else {
+                Log.i("FlashTube", "media source ${mediaItem.mediaId}: playing direct video (${chosenQuality.height}p)")
+                return videoSource
             }
         }
 

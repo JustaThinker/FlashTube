@@ -2,14 +2,93 @@ package com.thinker.flashtube.data
 
 import android.content.Context
 import android.util.Log
+import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
-import androidx.media3.database.StandaloneDatabaseProvider
 import com.thinker.flashtube.Net
 import java.io.File
+import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicReference
+
+enum class VideoPlaybackCacheStream(val keyPart: String) {
+    MUXED("muxed"),
+    VIDEO("video"),
+    AUDIO("audio"),
+}
+
+private const val VIDEO_PLAYBACK_CACHE_PREFIX = "video-playback:"
+private const val OPAQUE_PLAYBACK_CACHE_PREFIX = "playback-uri:"
+private val ITAG_QUERY_PARAMETER = Regex("(?:[?&])itag=([^&#]+)", RegexOption.IGNORE_CASE)
+private val LAST_MODIFIED_QUERY_PARAMETER = Regex("(?:[?&])lmt=([^&#]+)", RegexOption.IGNORE_CASE)
+private val CONTENT_LENGTH_QUERY_PARAMETER = Regex("(?:[?&])clen=([^&#]+)", RegexOption.IGNORE_CASE)
+private val AUDIO_TRACK_QUERY_PARAMETER = Regex("(?:[?&])xtags=([^&#]+)", RegexOption.IGNORE_CASE)
+private val NON_KEY_CHARACTER = Regex("[^a-z0-9._-]+")
+
+fun videoPlaybackCacheKey(
+    videoId: String,
+    stream: VideoPlaybackCacheStream,
+    sourceUrl: String,
+    fallbackVariant: String,
+): String {
+    val itag = ITAG_QUERY_PARAMETER.valueIn(sourceUrl)
+    val rendition = itag
+        ?.let {
+            buildString {
+                append("itag-").append(it)
+                LAST_MODIFIED_QUERY_PARAMETER.valueIn(sourceUrl)?.let { value ->
+                    append("-lmt-").append(value)
+                }
+                CONTENT_LENGTH_QUERY_PARAMETER.valueIn(sourceUrl)?.let { value ->
+                    append("-clen-").append(value)
+                }
+                AUDIO_TRACK_QUERY_PARAMETER.valueIn(sourceUrl)?.let { value ->
+                    append("-track-").append(value.sha256Prefix())
+                }
+            }
+        }
+        ?: run {
+            val variant = fallbackVariant
+                .lowercase()
+                .replace(NON_KEY_CHARACTER, "-")
+                .trim('-')
+                .takeIf { it.isNotBlank() }
+                ?: "default"
+            "$variant-url-${sourceUrl.sha256Prefix()}"
+        }
+    return "$VIDEO_PLAYBACK_CACHE_PREFIX$videoId:${stream.keyPart}:$rendition"
+}
+
+private fun Regex.valueIn(url: String): String? =
+    find(url)?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() }
+
+private fun String.sha256Prefix(): String =
+    MessageDigest.getInstance("SHA-256")
+        .digest(toByteArray(Charsets.UTF_8))
+        .take(8)
+        .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
+
+fun isVideoPlaybackCacheKey(key: String): Boolean =
+    key.startsWith(VIDEO_PLAYBACK_CACHE_PREFIX)
+
+fun opaquePlaybackCacheKey(uri: String): String =
+    "$OPAQUE_PLAYBACK_CACHE_PREFIX$uri"
+
+fun isUncacheablePlaybackUrl(url: String): Boolean {
+    val afterScheme = url.substringAfter("://", missingDelimiterValue = "")
+    if (afterScheme.isEmpty()) return false
+    val authorityEnd = afterScheme.indexOfFirst { it == '/' || it == '?' || it == '#' }
+    val authority = if (authorityEnd < 0) afterScheme else afterScheme.take(authorityEnd)
+    val rest = if (authorityEnd < 0) "" else afterScheme.substring(authorityEnd)
+    val host = authority.substringAfterLast('@').substringBefore(':').lowercase()
+    val path = rest.substringBefore('?').substringBefore('#')
+    if (path.endsWith(".m3u8", ignoreCase = true) || path.endsWith(".mpd", ignoreCase = true)) {
+        return true
+    }
+    val googleVideo = host == "googlevideo.com" || host.endsWith(".googlevideo.com")
+    return googleVideo && path.isNotEmpty() && !rest.contains('?')
+}
 
 /** A bounded, transient cache for ordinary progressive YouTube video and audio bytes. */
 object VideoPlaybackCache {
@@ -19,7 +98,6 @@ object VideoPlaybackCache {
     private val cacheRef = AtomicReference<SimpleCache?>()
     private val factoryRef = AtomicReference<DataSource.Factory?>()
 
-    /** Cache playback bytes on disk; if cache setup fails, keep playback working directly. */
     fun dataSourceFactory(context: Context): DataSource.Factory {
         factoryRef.get()?.let { return it }
         val created = runCatching {
@@ -36,14 +114,9 @@ object VideoPlaybackCache {
         return factoryRef.get() ?: created
     }
 
-    /** Stable across refreshed signed URLs and unique to each selected rendition. */
     fun cacheKey(videoId: String, streamRole: String, url: String, fallbackVariant: String): String {
-        val itag = Regex("(?:[?&])itag=([^&#]+)", RegexOption.IGNORE_CASE)
-            .find(url)?.groupValues?.getOrNull(1)
-        // Keep the rendition in the key even when YouTube provides an itag.
-        val identity = listOfNotNull(itag, fallbackVariant.takeIf { it.isNotBlank() })
-            .joinToString(":")
-        return "flashtube-video:$videoId:$streamRole:$identity"
+        val stream = if (streamRole == "audio") VideoPlaybackCacheStream.AUDIO else VideoPlaybackCacheStream.VIDEO
+        return videoPlaybackCacheKey(videoId, stream, url, fallbackVariant)
     }
 
     @Synchronized

@@ -851,7 +851,10 @@ class PlayerState(private val scope: CoroutineScope) {
         val position = player.currentPosition
         val playWhenReady = player.playWhenReady
 
-        // 1. Clear video size constraints so ExoPlayer accepts whatever single-resolution or adaptive stream is requested
+        // 1. Invalidate cached resolution so the new target quality height is re-picked
+        com.thinker.flashtube.data.VideoStreamResolutionCache.invalidate(item.id)
+
+        // 2. Clear video size constraints so ExoPlayer accepts whatever single-resolution or adaptive stream is requested
         try {
             player.trackSelectionParameters = player.trackSelectionParameters
                 .buildUpon()
@@ -861,14 +864,10 @@ class PlayerState(private val scope: CoroutineScope) {
             Log.e(TAG, "Error setting trackSelectionParameters", e)
         }
 
-        // 2. Rebuild current media source for immediate stream resolution match
+        // 3. Rebuild current media source for immediate stream resolution match
         replaceCurrent(player, item, position)
         player.playWhenReady = playWhenReady
-        val info = StreamCache.get(item.id)
-        if (info != null) {
-            val picked = StreamSelection.pick(info)
-            details = details?.copy(quality = picked.playedHeight?.let { "${it}p" })
-        }
+        details = details?.copy(quality = height?.let { "${it}p" } ?: "Auto")
         actionMessage = if (height == null) "Quality: Auto" else "Quality: ${height}p"
     }
 
