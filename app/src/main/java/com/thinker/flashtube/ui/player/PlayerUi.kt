@@ -199,14 +199,14 @@ fun PlayerScreen(
         }
     }
 
-    // Live frame sampling: sample the TextureView ~4× per second while playing
+    // Live frame sampling: sample the TextureView ~1s per second while playing
     LaunchedEffect(state.isPlaying, state.expanded) {
-        if (!state.expanded || !AmbientMode.enabled) return@LaunchedEffect
+        if (!state.isPlaying || !state.expanded || !AmbientMode.enabled) return@LaunchedEffect
         while (true) {
-            kotlinx.coroutines.delay(250)
-            if (!AmbientMode.enabled) break
+            kotlinx.coroutines.delay(1000)
+            if (!state.isPlaying || !state.expanded || !AmbientMode.enabled) break
             val sampled = SharedVideoTexture.sampleAmbientColor()
-            if (sampled != null) dominantColor = sampled
+            if (sampled != null && sampled != dominantColor) dominantColor = sampled
         }
     }
 

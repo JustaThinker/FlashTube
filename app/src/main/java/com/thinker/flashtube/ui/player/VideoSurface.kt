@@ -16,6 +16,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.Player
 import java.lang.ref.WeakReference
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /** The app's single shared video surface (see FlashTubeApp). */
 val LocalVideoSurface = androidx.compose.runtime.staticCompositionLocalOf<@Composable (Modifier) -> Unit> { { m -> VideoSurface(null, m) } }
@@ -58,18 +60,24 @@ object SharedVideoTexture {
 
     /**
      * Extracts a vibrant ambient color from the currently rendered frame on the TextureView.
-     * Must be called on the main thread.
+     * Safely captures pixels on main thread and calculates vibrant color on background thread.
      */
-    fun sampleAmbientColor(): Color? {
+    suspend fun sampleAmbientColor(): Color? {
         val view = activeViewRef?.get() ?: return null
         if (!view.isAvailable || !view.isAttachedToWindow) return null
         if (view.width <= 0 || view.height <= 0) return null
-        return try {
-            val bm = view.getBitmap(sampleBitmap) ?: return null
-            bm.getPixels(samplePixels, 0, 16, 0, 0, 16, 12)
-            extractVibrantColor(samplePixels)
-        } catch (_: Throwable) {
-            null
+        val pixels = withContext(Dispatchers.Main) {
+            try {
+                val bm = view.getBitmap(sampleBitmap) ?: return@withContext null
+                bm.getPixels(samplePixels, 0, 16, 0, 0, 16, 12)
+                samplePixels.clone()
+            } catch (_: Throwable) {
+                null
+            }
+        } ?: return null
+
+        return withContext(Dispatchers.Default) {
+            extractVibrantColor(pixels)
         }
     }
 

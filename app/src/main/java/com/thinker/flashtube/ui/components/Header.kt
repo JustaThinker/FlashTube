@@ -66,11 +66,14 @@ fun CollapsingHeaderLayout(
         object : NestedScrollConnection {
             override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
                 val h = headerPx.toFloat()
-                if (h <= 0f || consumed.y == 0f) return Offset.Zero
-                // Follows what the list actually scrolled, so a list too short to scroll
-                // (or the pull-to-refresh overscroll) never moves the header.
-                val target = (offset.value + consumed.y).coerceIn(-h, 0f)
-                scope.launch { offset.snapTo(target) }
+                if (h <= 0f) return Offset.Zero
+                val delta = if (consumed.y != 0f) consumed.y else if (available.y > 0f) available.y else 0f
+                if (delta == 0f) return Offset.Zero
+                val current = offset.value
+                val target = (current + delta).coerceIn(-h, 0f)
+                if (target != current) {
+                    scope.launch { offset.snapTo(target) }
+                }
                 return Offset.Zero
             }
 

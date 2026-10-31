@@ -258,7 +258,12 @@ object ChannelAvatars {
     private val gate = Semaphore(4)
 
     fun resolve(scope: CoroutineScope, videos: List<VideoItem>, seed: Map<String, String?> = emptyMap()) {
-        seed.forEach { (id, url) -> url?.let { known[id] = normalizeChannelAvatarUrl(it) } }
+        seed.forEach { (id, url) ->
+            if (url != null) {
+                val normalized = normalizeChannelAvatarUrl(url)
+                if (known[id] != normalized) known[id] = normalized
+            }
+        }
         val need = mutableSetOf<String>()
         for (v in videos) {
             if (v.avatar == null) {
@@ -275,7 +280,7 @@ object ChannelAvatars {
                 gate.withPermit {
                     withContext(Dispatchers.IO) {
                         runCatching { InnerTube.channelAvatarUrl(id) }
-                            .onSuccess { url -> if (url != null) known[id] = url }
+                            .onSuccess { url -> if (url != null && known[id] != url) known[id] = url }
                             .onFailure { asked.remove(id) }
                     }
                 }

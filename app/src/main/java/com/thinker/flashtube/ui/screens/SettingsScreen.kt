@@ -37,8 +37,7 @@ import androidx.compose.material.icons.rounded.AccountCircle
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.KeyboardArrowDown
-import androidx.compose.material.icons.rounded.KeyboardArrowUp
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.CleaningServices
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.FastForward
@@ -57,13 +56,18 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -84,14 +88,48 @@ import androidx.compose.ui.unit.sp
 enum class SettingsSection(
     val title: String,
     val icon: ImageVector,
+    val description: String,
 ) {
-    Appearance("Appearance", Icons.Rounded.DarkMode),
-    ContentRegion("Content Region", Icons.Rounded.Public),
-    Playback("Playback", Icons.Rounded.PlayCircle),
-    SponsorBlock("SponsorBlock", Icons.Rounded.FastForward),
-    DataStorage("Data & Storage", Icons.Rounded.Storage),
-    About("About", Icons.Rounded.Info),
+    Appearance("Appearance", Icons.Rounded.DarkMode, "Theme and display preferences"),
+    ContentRegion("Content Region", Icons.Rounded.Public, "Choose your content region"),
+    Playback("Playback", Icons.Rounded.PlayCircle, "Playback quality and controls"),
+    SponsorBlock("SponsorBlock", Icons.Rounded.FastForward, "Skip sponsored video segments"),
+    DataStorage("Data & Storage", Icons.Rounded.Storage, "Cache and saved data"),
+    About("About", Icons.Rounded.Info, "App information and privacy"),
 }
+
+private data class SettingsSearchEntry(
+    val title: String,
+    val description: String,
+    val section: SettingsSection,
+    val keywords: String = "",
+)
+
+private val innerSettingsSearchEntries = listOf(
+    SettingsSearchEntry("Theme mode", "System, Light, Dark, or OLED Black", SettingsSection.Appearance, "appearance color dark light black amoled oled"),
+    SettingsSearchEntry("Ambient lighting effect", "Casts a soft glow behind the player", SettingsSection.Appearance, "display effects glow"),
+    SettingsSearchEntry("Content region", "Location for feeds and search recommendations", SettingsSection.ContentRegion, "country region location recommendations"),
+    SettingsSearchEntry("Double-tap to seek", "Choose the seek interval for double-tap", SettingsSection.ContentRegion, "skip forward backward fast forward rewind"),
+    SettingsSearchEntry("Ambient lighting", "Glow behind the player updates with video content", SettingsSection.ContentRegion, "player glow"),
+    SettingsSearchEntry("Remember playback speed", "Use your saved speed for new videos", SettingsSection.ContentRegion, "speed playback"),
+    SettingsSearchEntry("Double-tap seek step", "Set the number of seconds to skip", SettingsSection.ContentRegion, "seek seconds interval"),
+    SettingsSearchEntry("Wi-Fi default quality", "Default video quality on unmetered networks", SettingsSection.ContentRegion, "wifi video resolution auto hd"),
+    SettingsSearchEntry("Mobile data default quality", "Default video quality on metered networks", SettingsSection.ContentRegion, "cellular data resolution auto hd"),
+    SettingsSearchEntry("Prefer HDR video", "Prioritize HDR streams when available", SettingsSection.ContentRegion, "high dynamic range video quality"),
+    SettingsSearchEntry("Enable SponsorBlock", "Automatically skip sponsor segments", SettingsSection.SponsorBlock, "sponsor skip toggle"),
+    SettingsSearchEntry("Sponsor segments", "Paid promotions, product ads, and sponsored deals", SettingsSection.SponsorBlock, "advertisement ads"),
+    SettingsSearchEntry("Intros and intermissions", "Channel intros, title animations, and pause screens", SettingsSection.SponsorBlock, "skip intro"),
+    SettingsSearchEntry("Endcards and credits", "End screens, credits, and post-video cards", SettingsSection.SponsorBlock, "outro skip"),
+    SettingsSearchEntry("Subscribe and like reminders", "Requests to like, subscribe, or follow", SettingsSection.SponsorBlock, "interaction skip"),
+    SettingsSearchEntry("Self-promotion", "Merch plugs, creator products, and social links", SettingsSection.SponsorBlock, "creator promotion"),
+    SettingsSearchEntry("Non-music parts in music videos", "Dialogue or narrative in music videos", SettingsSection.SponsorBlock, "music skip"),
+    SettingsSearchEntry("Previews and recaps", "Upcoming clip teasers or previous episode recaps", SettingsSection.SponsorBlock, "skip preview recap"),
+    SettingsSearchEntry("Clear stream cache", "Refresh cached stream URLs", SettingsSection.DataStorage, "data storage cache"),
+    SettingsSearchEntry("Clear search history", "Remove saved search queries", SettingsSection.DataStorage, "data storage queries"),
+    SettingsSearchEntry("Privacy and Open Source", "Zero tracking SDKs, ad-free, completely open source", SettingsSection.About, "about tracking ads privacy"),
+    SettingsSearchEntry("Google Session Sync", "Encrypted session tokens stored using Android Keystore", SettingsSection.About, "account sync security encryption"),
+    SettingsSearchEntry("PoToken and Player Fallback", "Player compatibility and bot-check fallback information", SettingsSection.About, "youtube playback token"),
+)
 
 @Composable
 fun SettingsScreen(
@@ -188,6 +226,7 @@ private fun SettingsMainList(
     val c = MaterialTheme.colorScheme
     val profile = Account.profile
     val scrollState = rememberScrollState()
+    var searchQuery by rememberSaveable { mutableStateOf("") }
 
     Column(modifier = Modifier.fillMaxSize()) {
         BackScreenHeader(onBack = onBack) {
@@ -195,7 +234,7 @@ private fun SettingsMainList(
                 text = "Settings",
                 fontFamily = RoundedHeavy,
                 fontWeight = FontWeight.Bold,
-                fontSize = 22.sp,
+                fontSize = 32.sp,
                 letterSpacing = (-0.5).sp,
             )
         }
@@ -204,33 +243,89 @@ private fun SettingsMainList(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(scrollState)
-                .padding(horizontal = 20.dp)
+                .padding(horizontal = 16.dp)
                 .padding(bottom = contentPadding.calculateBottomPadding() + 28.dp),
         ) {
             Spacer(Modifier.height(4.dp))
-
-            SonicSpaceSectionTitle("Account")
-            SettingsProfileCard(
-                profile = profile,
-                onOpenAccounts = onOpenAccounts,
-                onSignIn = onSignIn,
+            TextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                placeholder = { Text("Search settings") },
+                leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = "Search settings") },
+                trailingIcon = {
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(onClick = { searchQuery = "" }) {
+                            Icon(Icons.Rounded.Close, contentDescription = "Clear search")
+                        }
+                    }
+                },
+                singleLine = true,
+                shape = RoundedCornerShape(28.dp),
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = c.surfaceContainerHigh,
+                    unfocusedContainerColor = c.surfaceContainerHigh,
+                    focusedIndicatorColor = Color.Transparent,
+                    unfocusedIndicatorColor = Color.Transparent,
+                    disabledIndicatorColor = Color.Transparent,
+                ),
+                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
             )
 
-            Spacer(Modifier.height(16.dp))
+            if (searchQuery.isBlank()) {
+                SettingsProfileCard(
+                    profile = profile,
+                    onOpenAccounts = onOpenAccounts,
+                    onSignIn = onSignIn,
+                )
 
-            SonicSpaceSectionTitle("Preferences")
+                Spacer(Modifier.height(16.dp))
 
-            SonicSpaceGroupCard {
-                SettingsSection.entries.forEachIndexed { index, section ->
-                    CategoryRow(
-                        section = section,
-                        onClick = { onOpenSection(section) },
+                val settingsGroups = listOf(
+                    SettingsSection.entries.take(4),
+                    listOf(SettingsSection.DataStorage),
+                    listOf(SettingsSection.About),
+                )
+                settingsGroups.forEachIndexed { index, group ->
+                    SonicSpaceGroupCard {
+                        group.forEach { section ->
+                            CategoryRow(section = section, onClick = { onOpenSection(section) })
+                        }
+                    }
+                    if (index < settingsGroups.lastIndex) Spacer(Modifier.height(12.dp))
+                }
+            } else {
+                val matches = (SettingsSection.entries.map { section ->
+                    SettingsSearchEntry(
+                        section.title,
+                        if (section == SettingsSection.ContentRegion) ContentRegion.displaySummary else section.description,
+                        section,
                     )
-                    if (index < SettingsSection.entries.size - 1) {
-                        HorizontalDivider(
-                            color = c.onSurface.copy(alpha = 0.06f),
-                            modifier = Modifier.padding(horizontal = 12.dp),
-                        )
+                } + innerSettingsSearchEntries).filter { entry ->
+                    entry.title.contains(searchQuery, ignoreCase = true) ||
+                        entry.description.contains(searchQuery, ignoreCase = true) ||
+                        entry.keywords.contains(searchQuery, ignoreCase = true)
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    matches.forEach { entry ->
+                        Card(
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = c.surfaceContainerHigh),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                            modifier = Modifier.fillMaxWidth().pressable { onOpenSection(entry.section) },
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(entry.section.icon, contentDescription = null, tint = c.primary, modifier = Modifier.size(24.dp))
+                                Spacer(Modifier.width(12.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(entry.title, fontWeight = FontWeight.SemiBold, color = c.onSurface)
+                                    Text("${entry.section.title} · ${entry.description}", color = c.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+                                }
+                                Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, contentDescription = null, tint = c.onSurfaceVariant)
+                            }
+                        }
                     }
                 }
             }
@@ -242,12 +337,11 @@ private fun SettingsMainList(
 private fun SonicSpaceSectionTitle(title: String) {
     val c = MaterialTheme.colorScheme
     Text(
-        text = title.uppercase(),
-        style = MaterialTheme.typography.labelMedium,
+        text = title,
+        style = MaterialTheme.typography.titleMedium,
         fontWeight = FontWeight.Bold,
-        letterSpacing = 1.2.sp,
         color = c.primary,
-        modifier = Modifier.padding(start = 4.dp, top = 8.dp, bottom = 8.dp),
+        modifier = Modifier.padding(start = 4.dp, top = 8.dp, bottom = 6.dp),
     )
 }
 
@@ -259,8 +353,8 @@ private fun SonicSpaceGroupCard(
     val c = MaterialTheme.colorScheme
     Card(
         shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = c.surfaceContainerLow),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        colors = CardDefaults.cardColors(containerColor = c.surfaceContainerHighest.copy(alpha = 0.5f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(20.dp)),
@@ -268,7 +362,7 @@ private fun SonicSpaceGroupCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 4.dp, horizontal = 4.dp),
+                .padding(vertical = 0.dp),
             content = content,
         )
     }
@@ -284,37 +378,44 @@ private fun CategoryRow(
         modifier = Modifier
             .fillMaxWidth()
             .pressable(onClick = onClick)
-            .padding(vertical = 12.dp, horizontal = 2.dp),
+            .padding(vertical = 8.dp, horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
-                .size(38.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(c.surfaceContainerHigh),
+                .size(36.dp)
+                .clip(CircleShape)
+                .background(c.primaryContainer.copy(alpha = 0.45f)),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 imageVector = section.icon,
                 contentDescription = null,
-                tint = c.onSurface,
+                tint = c.primary,
                 modifier = Modifier.size(20.dp),
             )
         }
-        Spacer(Modifier.width(14.dp))
+        Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = section.title,
                 fontWeight = FontWeight.SemiBold,
-                fontSize = 15.5.sp,
+                style = MaterialTheme.typography.titleMedium,
                 color = c.onSurface,
             )
             if (section == SettingsSection.ContentRegion) {
                 Text(
                     text = ContentRegion.displaySummary,
-                    fontSize = 12.5.sp,
+                    style = MaterialTheme.typography.bodyMedium,
                     color = c.primary,
                     fontWeight = FontWeight.Medium,
+                )
+            } else {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = section.description,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = c.onSurfaceVariant,
                 )
             }
         }
@@ -1373,10 +1474,69 @@ private fun AccountsPage(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp)
+                .padding(horizontal = 16.dp)
                 .padding(bottom = 28.dp),
         ) {
             Spacer(Modifier.height(6.dp))
+            if (activeProfile != null) {
+                Card(
+                    shape = RoundedCornerShape(28.dp),
+                    colors = CardDefaults.cardColors(containerColor = c.surfaceContainerHigh),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(contentAlignment = Alignment.BottomEnd) {
+                                ChannelAvatar(activeProfile.avatar, activeProfile.name, size = 72)
+                                Box(
+                                    modifier = Modifier
+                                        .size(24.dp)
+                                        .clip(CircleShape)
+                                        .background(c.primary),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Check,
+                                        contentDescription = "Current account",
+                                        tint = c.onPrimary,
+                                        modifier = Modifier.size(14.dp),
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.width(16.dp))
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(
+                                    text = activeProfile.name,
+                                    style = MaterialTheme.typography.titleLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = c.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                activeProfile.handle?.let {
+                                    Text(
+                                        text = it,
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = c.primary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                Text(
+                                    text = "${accounts.size} connected account${if (accounts.size == 1) "" else "s"}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = c.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+            }
             Text(
                 text = "Select an account to switch profiles.",
                 fontSize = 13.sp,
@@ -1385,87 +1545,82 @@ private fun AccountsPage(
             )
 
             SonicSpaceSectionTitle("Saved Accounts")
-            SonicSpaceGroupCard {
-                accounts.forEachIndexed { index, account ->
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                accounts.forEach { account ->
                     val isActive = account.profile == activeProfile
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .pressable { Account.switchAccount(account) }
-                            .padding(vertical = 12.dp, horizontal = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                    Card(
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (isActive) c.primaryContainer.copy(alpha = 0.35f) else c.surfaceContainer,
+                        ),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                        modifier = Modifier.fillMaxWidth(),
                     ) {
-                        ChannelAvatar(account.profile.avatar, account.profile.name, size = 44)
-                        Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                text = account.profile.name,
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 14.5.sp,
-                                color = c.onSurface,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                text = account.profile.handle ?: if (isActive) "Current account" else "YouTube account",
-                                fontSize = 12.sp,
-                                color = c.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        if (isActive) {
-                            Icon(
-                                imageVector = Icons.Rounded.Check,
-                                contentDescription = "Current account",
-                                tint = c.primary,
-                                modifier = Modifier.padding(horizontal = 8.dp).size(20.dp),
-                            )
-                        }
-                        Icon(
-                            imageVector = Icons.Rounded.Close,
-                            contentDescription = "Remove ${account.profile.name}",
-                            tint = c.onSurfaceVariant.copy(alpha = 0.7f),
+                        Row(
                             modifier = Modifier
-                                .size(36.dp)
-                                .pressable {
-                                    Account.removeAccount(account.id)
-                                    if (Account.profile == null) onSignedOut()
-                                }
-                                .padding(9.dp),
-                        )
-                    }
-                    if (index < accounts.lastIndex) {
-                        HorizontalDivider(
-                            color = c.onSurface.copy(alpha = 0.06f),
-                            modifier = Modifier.padding(horizontal = 12.dp),
-                        )
+                                .fillMaxWidth()
+                                .pressable { if (!isActive) Account.switchAccount(account) }
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            ChannelAvatar(account.profile.avatar, account.profile.name, size = 40)
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    text = account.profile.name,
+                                    fontWeight = if (isActive) FontWeight.Bold else FontWeight.Medium,
+                                    fontSize = 14.5.sp,
+                                    color = if (isActive) c.primary else c.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    text = account.profile.handle ?: if (isActive) "Current account" else "YouTube account",
+                                    fontSize = 12.sp,
+                                    color = if (account.profile.handle != null) c.primary else c.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            if (isActive) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Check,
+                                    contentDescription = "Current account",
+                                    tint = c.primary,
+                                    modifier = Modifier.padding(end = 4.dp).size(22.dp),
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Rounded.Close,
+                                    contentDescription = "Remove ${account.profile.name}",
+                                    tint = c.error,
+                                    modifier = Modifier
+                                        .size(40.dp)
+                                        .pressable {
+                                            Account.removeAccount(account.id)
+                                            if (Account.profile == null) onSignedOut()
+                                        }
+                                        .padding(11.dp),
+                                )
+                            }
+                        }
                     }
                 }
 
-                HorizontalDivider(
-                    color = c.onSurface.copy(alpha = 0.06f),
-                    modifier = Modifier.padding(horizontal = 12.dp),
-                )
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .pressable(onClick = onSignIn)
-                        .padding(vertical = 14.dp, horizontal = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = c.surfaceContainerHigh),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                    modifier = Modifier.fillMaxWidth().pressable(onClick = onSignIn),
                 ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Add,
-                        contentDescription = null,
-                        tint = c.primary,
-                        modifier = Modifier.padding(start = 8.dp, end = 12.dp).size(22.dp),
-                    )
-                    Text(
-                        text = "Add another account",
-                        color = c.primary,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 14.sp,
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.Rounded.Add, contentDescription = null, tint = c.primary, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(12.dp))
+                        Text("Add another account", color = c.primary, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                    }
                 }
             }
 
@@ -1509,40 +1664,20 @@ private fun SettingsProfileCard(
 ) {
     val c = MaterialTheme.colorScheme
     val isLoggedIn = profile != null
-    val accounts = Account.accounts
-    var expanded by rememberSaveable { mutableStateOf(false) }
 
     Card(
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (isLoggedIn) c.surfaceContainerLow else c.surfaceContainerHigh,
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        shape = RoundedCornerShape(28.dp),
+        colors = CardDefaults.cardColors(containerColor = c.surfaceContainerHighest.copy(alpha = 0.5f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp)),
+            .clip(RoundedCornerShape(28.dp))
+            .pressable(onClick = if (isLoggedIn) onOpenAccounts else onSignIn),
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(
-                    if (isLoggedIn) {
-                        Brush.linearGradient(
-                            colors = listOf(
-                                c.primaryContainer.copy(alpha = 0.25f),
-                                c.surfaceContainerLow,
-                            ),
-                        )
-                    } else {
-                        Brush.linearGradient(
-                            colors = listOf(
-                                c.surfaceContainerHigh,
-                                c.surfaceContainerLow,
-                            ),
-                        )
-                    },
-                )
-                .padding(16.dp),
+                .padding(horizontal = 20.dp, vertical = 26.dp),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1551,11 +1686,11 @@ private fun SettingsProfileCard(
                 // Profile Avatar / Placeholder
                 Box(contentAlignment = Alignment.Center) {
                     if (isLoggedIn && profile?.avatar != null) {
-                        ChannelAvatar(profile.avatar, profile.name, size = 52)
+                        ChannelAvatar(profile.avatar, profile.name, size = 54)
                     } else {
                         Box(
                             modifier = Modifier
-                                .size(52.dp)
+                            .size(54.dp)
                                 .clip(CircleShape)
                                 .background(c.primaryContainer),
                             contentAlignment = Alignment.Center,
@@ -1564,136 +1699,44 @@ private fun SettingsProfileCard(
                                 imageVector = Icons.Rounded.AccountCircle,
                                 contentDescription = null,
                                 tint = c.onPrimaryContainer,
-                                modifier = Modifier.size(32.dp),
+                                modifier = Modifier.size(36.dp),
                             )
                         }
                     }
                 }
 
-                Spacer(Modifier.width(14.dp))
+                Spacer(Modifier.width(16.dp))
 
-                // Account Name & Status
                 Column(Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = if (isLoggedIn) profile!!.name else "YouTube Account",
-                            fontWeight = FontWeight.ExtraBold,
-                            fontSize = 16.5.sp,
-                            color = c.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        if (isLoggedIn) {
-                            Spacer(Modifier.width(6.dp))
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(c.primary.copy(alpha = 0.15f))
-                                    .padding(horizontal = 6.dp, vertical = 2.dp),
-                            ) {
-                                Text(
-                                    text = "SYNCED",
-                                    fontSize = 9.5.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = c.primary,
-                                )
-                            }
-                        }
-                    }
-
-                    Spacer(Modifier.height(3.dp))
-
                     Text(
-                        text = if (isLoggedIn) (profile?.handle ?: "Active account") else "Sign in to sync your library",
-                        fontSize = 12.5.sp,
+                        text = if (isLoggedIn) profile!!.name else "Guest User",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = c.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = if (isLoggedIn) "Logged in with YouTube" else "Tap to sign in or switch account",
+                        style = MaterialTheme.typography.bodyMedium,
                         color = c.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
 
-                // Action Button / Switcher Toggle
                 if (isLoggedIn) {
-                    Box(
-                        modifier = Modifier
-                            .pressable { expanded = !expanded }
-                            .size(40.dp)
-                            .clip(CircleShape),
-                        contentAlignment = Alignment.Center,
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = c.primaryContainer.copy(alpha = 0.5f),
                     ) {
-                        Icon(
-                            if (expanded) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
-                            contentDescription = if (expanded) "Collapse accounts" else "Expand accounts",
-                            tint = c.onSurfaceVariant,
-                            modifier = Modifier.size(24.dp),
+                        Text(
+                            text = "Account",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = c.primary,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                         )
-                    }
-                } else if (!isLoggedIn) {
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(c.surfaceContainerHighest)
-                            .padding(horizontal = 7.dp, vertical = 4.dp),
-                    ) {
-                        Text("SIGNED OUT", color = c.onSurfaceVariant, fontWeight = FontWeight.Bold, fontSize = 9.sp)
-                    }
-                }
-            }
-
-            if (!isLoggedIn) {
-                Spacer(Modifier.height(16.dp))
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .pressable(onClick = onSignIn)
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(c.primary)
-                        .padding(vertical = 12.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text("Sign in", color = c.onPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                }
-            }
-
-            // Keep switching compact on Settings; the Accounts page contains management actions.
-            if (isLoggedIn && expanded) {
-                Spacer(Modifier.height(14.dp))
-                HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f))
-                Spacer(Modifier.height(12.dp))
-
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    accounts.take(2).forEach { acc ->
-                        val isActive = acc.profile == profile
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .pressable { Account.switchAccount(acc) }
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(if (isActive) c.surfaceContainerHighest else Color.Transparent)
-                                .padding(horizontal = 10.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            ChannelAvatar(acc.profile.avatar, acc.profile.name, size = 34)
-                            Spacer(Modifier.width(10.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(acc.profile.name, fontWeight = FontWeight.Bold, fontSize = 13.5.sp, color = c.onSurface)
-                                acc.profile.handle?.let { Text(it, fontSize = 11.5.sp, color = c.onSurfaceVariant) }
-                            }
-                            if (isActive) {
-                                Icon(Icons.Rounded.Check, contentDescription = "Active", tint = c.primary, modifier = Modifier.size(18.dp))
-                            }
-                        }
-                    }
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .pressable(onClick = onOpenAccounts)
-                            .padding(horizontal = 10.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text("${accounts.size} accounts · All accounts", color = c.onSurface, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp, modifier = Modifier.weight(1f))
-                        Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, contentDescription = "Open accounts", tint = c.onSurfaceVariant)
                     }
                 }
             }

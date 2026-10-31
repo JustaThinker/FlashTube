@@ -3,6 +3,7 @@ package com.thinker.flashtube
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -285,22 +286,12 @@ fun Modifier.overlayTouchBlock(): Modifier = composed {
 
 /**
  * Starts extracting a video's streams the moment a finger rests on it, ~100+ ms before the
- * tap completes. A touch that turns into a scroll (moves past touch slop within 60 ms)
- * doesn't prefetch. Observes only; never consumes, so clicks and scrolling are unaffected.
+ * tap completes. Observes only; never consumes, so clicks and scrolling are unaffected.
  */
 fun Modifier.prefetchOnPress(videoId: String): Modifier = pointerInput(videoId) {
     awaitEachGesture {
-        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-        val slop = viewConfiguration.touchSlop
-        val scrolled = withTimeoutOrNull(60) {
-            while (true) {
-                val change = awaitPointerEvent(PointerEventPass.Initial).changes.firstOrNull { it.id == down.id } ?: return@withTimeoutOrNull false
-                if (!change.pressed) return@withTimeoutOrNull false
-                if ((change.position - down.position).getDistance() > slop) return@withTimeoutOrNull true
-            }
-            @Suppress("UNREACHABLE_CODE") false
-        }
-        if (scrolled != true) StreamCache.prefetch(videoId)
+        awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Main)
+        StreamCache.prefetch(videoId)
     }
 }
 

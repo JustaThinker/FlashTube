@@ -14,7 +14,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.composed
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 
@@ -57,12 +56,14 @@ fun rememberReducedMotion(): Boolean {
  * spring back, done as a layer transform (no relayout). No ripple.
  */
 @OptIn(ExperimentalFoundationApi::class)
+@Composable
 fun Modifier.pressable(
     enabled: Boolean = true,
     pressedScale: Float = 0.94f,
     onLongClick: (() -> Unit)? = null,
     onClick: () -> Unit,
-): Modifier = composed {
+): Modifier {
+    if (!enabled) return this
     val view = LocalView.current
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
@@ -72,12 +73,8 @@ fun Modifier.pressable(
         animationSpec = spring(dampingRatio = 0.6f, stiffness = 1400f),
         label = "pressScale",
     )
-    val layer = this.graphicsLayer { scaleX = scale; scaleY = scale }
-    // Disabled: no click handling at all, so taps fall through to what's underneath
-    // (a disabled combinedClickable still swallows them — e.g. hidden video controls
-    // blocking the tap that should bring them back).
-    if (!enabled) return@composed layer
-    layer
+    return this
+        .graphicsLayer { scaleX = scale; scaleY = scale }
         .combinedClickable(
             interactionSource = interaction,
             indication = null,

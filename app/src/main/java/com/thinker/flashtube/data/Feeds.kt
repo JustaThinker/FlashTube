@@ -485,43 +485,65 @@ class LibraryData(scope: CoroutineScope) {
         home.ensureLoaded(identity)
     }
 
+    private var cachedBaseVideos: List<VideoItem>? = null
+    private var cachedHomePosts: List<CommunityPost>? = null
+    private var cachedGeneration: Int = -1
+    private var cachedSelectedChipKey: String? = null
+    private var cachedRowsResult: List<VideoItem>? = null
+
     /** Interleave server-fetched channel posts among normal videos, never anchoring them to mixes. */
     fun homeRows(): List<VideoItem> {
         val base = home.videos
-        val supplementalPosts = if (home.selectedChip == null) {
+        val chipKey = home.selectedChip?.key
+        val gen = home.generation
+        if (cachedRowsResult != null &&
+            cachedBaseVideos === base &&
+            cachedHomePosts === homePosts &&
+            cachedGeneration == gen &&
+            cachedSelectedChipKey == chipKey
+        ) {
+            return cachedRowsResult!!
+        }
+
+        val supplementalPosts = if (chipKey == null) {
             val present = base.mapNotNullTo(HashSet()) { it.feedPost?.id }
             homePosts.filterNot { it.id in present }
         } else emptyList()
-        if (supplementalPosts.isEmpty()) return base
-
-        val rows = ArrayList<VideoItem>(base.size + supplementalPosts.size)
-        var postIndex = 0
-        var videosSincePost = 0
-        // Pick a varied interval once per feed generation. Seeding keeps positions stable
-        // across Compose recompositions, while a refreshed feed gets a new distribution.
-        val spacing = kotlin.random.Random(home.generation)
-        var videosUntilPost = spacing.nextInt(from = 8, until = 16)
-        var lastWasPost = false
-        for (item in base) {
-            if (item.feedPost != null && lastWasPost) continue
-            rows += item
-            if (item.feedPost != null) {
-                lastWasPost = true
-                videosSincePost = 0
-                videosUntilPost = spacing.nextInt(from = 8, until = 16)
-                continue
+        val result: List<VideoItem> = if (supplementalPosts.isEmpty()) {
+            base
+        } else {
+            val rows = ArrayList<VideoItem>(base.size + supplementalPosts.size)
+            var postIndex = 0
+            var videosSincePost = 0
+            val spacing = kotlin.random.Random(gen)
+            var videosUntilPost = spacing.nextInt(from = 8, until = 16)
+            var lastWasPost = false
+            for (item in base) {
+                if (item.feedPost != null && lastWasPost) continue
+                rows += item
+                if (item.feedPost != null) {
+                    lastWasPost = true
+                    videosSincePost = 0
+                    videosUntilPost = spacing.nextInt(from = 8, until = 16)
+                    continue
+                }
+                lastWasPost = false
+                if (item.mixPlaylistId == null) videosSincePost++
+                if (videosSincePost >= videosUntilPost && postIndex < supplementalPosts.size) {
+                    rows += supplementalPosts[postIndex++].asHomePostRow()
+                    lastWasPost = true
+                    videosSincePost = 0
+                    videosUntilPost = spacing.nextInt(from = 8, until = 16)
+                }
             }
-            lastWasPost = false
-            // Keep posts independent from mix placement: count ordinary videos only.
-            if (item.mixPlaylistId == null) videosSincePost++
-            if (videosSincePost >= videosUntilPost && postIndex < supplementalPosts.size) {
-                rows += supplementalPosts[postIndex++].asHomePostRow()
-                lastWasPost = true
-                videosSincePost = 0
-                videosUntilPost = spacing.nextInt(from = 8, until = 16)
-            }
+            rows
         }
-        return rows
+        cachedBaseVideos = base
+        cachedHomePosts = homePosts
+        cachedGeneration = gen
+        cachedSelectedChipKey = chipKey
+        cachedRowsResult = result
+        return result
     }
 
     private fun CommunityPost.asHomePostRow() = VideoItem(
