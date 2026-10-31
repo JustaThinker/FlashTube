@@ -69,6 +69,7 @@ data class FeedPage(
     val next: String?,
     val channelHeader: ChannelHeaderMeta? = null,
     val chips: List<FeedChip> = emptyList(),
+    val channelCard: ChannelDetails? = null,
 )
 
 @Immutable
@@ -470,9 +471,11 @@ object InnerTube {
 
     // ── Reads ──────────────────────────────────────────────────────────────────
 
-    suspend fun search(query: String, continuation: String? = null): FeedPage = withContext(Dispatchers.IO) {
+    suspend fun search(query: String, continuation: String? = null, params: String? = null): FeedPage = withContext(Dispatchers.IO) {
         val body = if (continuation != null) JSONObject().put("continuation", continuation)
-                   else JSONObject().put("query", query)
+                   else JSONObject().put("query", query).apply {
+                       params?.takeIf { it.isNotBlank() }?.let { put("params", it) }
+                   }
         parseFeed(postAny("search", body))
     }
 
@@ -894,8 +897,33 @@ object InnerTube {
         var next: String? = null
         val chips = LinkedHashMap<String, FeedChip>()
         val mixPlaylistIds = HashSet<String>()
+        var channelCard: ChannelDetails? = null
         root.walk { key, obj ->
             when (key) {
+                "channelRenderer", "gridChannelRenderer" -> {
+                    if (channelCard == null) {
+                        val id = obj.optString("channelId").ifBlank { null }
+                        val title = obj.text("title").orEmpty()
+                        if (id != null && title.isNotBlank()) {
+                            val avatar = obj.thumbnails()?.lastOrNull()?.let(::absoluteUrl)
+                            val subText = obj.text("subscriberCountText") ?: obj.text("videoCountText")
+                            val verified = obj.toString().contains("BADGE_STYLE_TYPE_VERIFIED")
+                            channelCard = ChannelDetails(
+                                url = "https://www.youtube.com/channel/$id",
+                                id = id,
+                                name = title,
+                                avatar = avatar,
+                                banner = null,
+                                subscribers = parseViews(subText.orEmpty()),
+                                videoCount = -1,
+                                handle = subText,
+                                verified = verified,
+                                description = obj.text("descriptionSnippet").orEmpty(),
+                                videosTab = null,
+                            )
+                        }
+                    }
+                }
                 "chipCloudChipRenderer" -> {
                     val title = (obj.text("text")
                         ?: obj.optJSONObject("accessibilityData")?.optJSONObject("accessibilityData")?.optString("label"))
@@ -981,7 +1009,7 @@ object InnerTube {
                     obj.collectStrings("token").firstOrNull()?.let { next = it }
             }
         }
-        return FeedPage(videos.values.toList(), next, chips = chips.values.toList())
+        return FeedPage(videos.values.toList(), next, chips = chips.values.toList(), channelCard = channelCard)
     }
 
     /** YouTube's "Members only" badge: BADGE_MEMBERS_ONLY (lockups) / BADGE_STYLE_TYPE_MEMBERS_ONLY (older renderers). */

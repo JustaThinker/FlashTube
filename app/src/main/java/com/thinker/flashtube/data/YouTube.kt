@@ -185,8 +185,8 @@ object YouTube {
         FeedPage(videos, next)
     }
 
-    suspend fun search(query: String, continuation: String? = null): FeedPage = withContext(Dispatchers.IO) {
-        InnerTube.search(query, continuation)
+    suspend fun search(query: String, continuation: String? = null, params: String? = null): FeedPage = withContext(Dispatchers.IO) {
+        InnerTube.search(query, continuation, params)
     }
 
     suspend fun nextRelated(continuation: String): FeedPage = withContext(Dispatchers.IO) {
