@@ -200,15 +200,15 @@ private fun CategoryChipSkeleton(modifier: Modifier = Modifier) {
         initialValue = -0.7f,
         targetValue = 1.7f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1150, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+            animation = tween(durationMillis = 1900, easing = androidx.compose.animation.core.LinearEasing),
             repeatMode = RepeatMode.Restart,
         ),
         label = "chip-skeleton-sweep",
     )
     val shimmer = Brush.linearGradient(
-        colors = listOf(c.surfaceContainerLow, c.surfaceContainerHighest, c.surfaceContainerLow),
-        start = Offset(sweep * 900f, 0f),
-        end = Offset((sweep + 0.8f) * 900f, 80f),
+        colors = listOf(c.surfaceContainerLow, c.surfaceContainerHighest.copy(alpha = 0.55f), c.surfaceContainerLow),
+        start = Offset(sweep * 700f, 0f),
+        end = Offset((sweep + 0.45f) * 700f, 80f),
     )
     LazyRow(
         modifier = Modifier

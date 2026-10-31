@@ -19,11 +19,14 @@ object ResumeStore {
     private const val EDGE_MS = 10_000L
 
     private var prefs: SharedPreferences? = null
+    private val musicVideoIds = mutableSetOf<String>()
     /** id → (positionMs, durationMs), also observable by the UI. */
     val positions = mutableStateMapOf<String, Pair<Long, Long>>()
 
     fun init(context: Context) {
         val p = context.getSharedPreferences("resume", Context.MODE_PRIVATE).also { prefs = it }
+        musicVideoIds.clear()
+        musicVideoIds.addAll(p.getStringSet("_music_video_ids", emptySet()).orEmpty())
         p.all.forEach { (id, value) ->
             val parts = (value as? String)?.split(',') ?: return@forEach
             val pos = parts.getOrNull(0)?.toLongOrNull() ?: return@forEach
@@ -35,6 +38,20 @@ object ResumeStore {
     /** Where to start [id], or 0. */
     fun startPosition(id: String): Long = positions[id]?.first ?: 0L
 
+    /** Music videos start from the beginning and are excluded from resume progress. */
+    fun markMusicVideo(id: String, isMusicVideo: Boolean) {
+        if (id.isBlank()) return
+        if (isMusicVideo) {
+            musicVideoIds.add(id)
+            positions.remove(id)
+            prefs?.edit()?.remove(id)?.putStringSet("_music_video_ids", musicVideoIds.toSet())?.apply()
+        } else if (musicVideoIds.remove(id)) {
+            prefs?.edit()?.putStringSet("_music_video_ids", musicVideoIds.toSet())?.apply()
+        }
+    }
+
+    fun isMusicVideo(id: String): Boolean = id in musicVideoIds
+
     /** 0..1 watched, or null if never started / finished. For thumbnail bars. */
     fun progress(id: String): Float? {
         val (pos, dur) = positions[id] ?: return null
@@ -42,6 +59,7 @@ object ResumeStore {
     }
 
     fun save(id: String, positionMs: Long, durationMs: Long) {
+        if (id in musicVideoIds) return
         if (id.isBlank() || durationMs <= 0 || durationMs == C.TIME_UNSET) return
         if (positionMs < EDGE_MS || positionMs > durationMs - EDGE_MS) {
             // Barely started or essentially finished: nothing to resume.

@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.background
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -35,6 +34,7 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.derivedStateOf
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -249,6 +249,40 @@ class FeedState(
     private var chipCacheIdentity: String? = null
     val hasMore get() = next != null
 
+    /** Resolve Mix cover-track metadata before publishing a page to card composables. */
+    private suspend fun withMixMetadata(page: FeedPage): FeedPage = coroutineScope {
+        val mixes = page.videos.filter { it.mixPlaylistId != null }
+        if (mixes.isEmpty()) return@coroutineScope page
+
+        val resolved = mixes.map { mix ->
+            async {
+                val playlistId = mix.mixPlaylistId ?: "RDMM${mix.id}"
+                val track = runCatching {
+                    val tracks = InnerTube.playlist(playlistId, videoId = mix.id).videos
+                        .filter { it.mixPlaylistId == null }
+                    tracks.firstOrNull { it.id == mix.id } ?: tracks.firstOrNull()
+                }.getOrNull()
+                mix.feedKey to track
+            }
+        }.awaitAll().toMap()
+
+        page.copy(
+            videos = page.videos.map { item ->
+                val track = resolved[item.feedKey] ?: return@map item
+                if (track == null) return@map item
+                item.copy(
+                    title = track.title,
+                    channel = track.channel,
+                    channelUrl = track.channelUrl,
+                    avatar = track.avatar ?: item.avatar,
+                    durationSec = track.durationSec,
+                    views = track.views,
+                    collabChannels = track.collabChannels,
+                )
+            },
+        )
+    }
+
     fun selectChip(chip: FeedChip?) {
         if (selectedChip?.key == chip?.key) return
         selectedChip = chip
@@ -331,7 +365,7 @@ class FeedState(
         chipsLoading = false
         job?.cancel()
         job = scope.launch {
-            runCatching { loader(null) }
+            runCatching { withMixMetadata(loader(null)) }
                 .onSuccess {
                     cachedFallback = null
                     videos = it.videos; next = it.next; generation++
@@ -372,7 +406,7 @@ class FeedState(
         if (loading) return
         loading = true
         job = scope.launch {
-            runCatching { loader(token) }
+            runCatching { withMixMetadata(loader(token)) }
                 .onSuccess { page ->
                     val seen = videos.mapTo(HashSet()) { it.feedKey }
                     val added = page.videos.filter { seen.add(it.feedKey) }
@@ -691,15 +725,15 @@ fun FeedSkeletonCard() {
         initialValue = -0.7f,
         targetValue = 1.7f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1150, easing = FastOutSlowInEasing),
+            animation = tween(durationMillis = 1900, easing = androidx.compose.animation.core.LinearEasing),
             repeatMode = RepeatMode.Restart,
         ),
         label = "feed-skeleton-sweep",
     )
     val shimmer = Brush.linearGradient(
-        colors = listOf(c.surfaceContainerLow, c.surfaceContainerHighest, c.surfaceContainerLow),
-        start = androidx.compose.ui.geometry.Offset(sweep * 900f, 0f),
-        end = androidx.compose.ui.geometry.Offset((sweep + 0.8f) * 900f, 700f),
+        colors = listOf(c.surfaceContainerLow, c.surfaceContainerHighest.copy(alpha = 0.55f), c.surfaceContainerLow),
+        start = androidx.compose.ui.geometry.Offset(sweep * 700f, 0f),
+        end = androidx.compose.ui.geometry.Offset((sweep + 0.45f) * 700f, 700f),
     )
     Column(Modifier.fillMaxWidth().padding(bottom = 18.dp)) {
         Box(Modifier.fillMaxWidth().height(210.dp).background(shimmer))

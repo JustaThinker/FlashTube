@@ -269,8 +269,13 @@ class PlayerState(private val scope: CoroutineScope) {
     val canGoPreviousMedia: Boolean get() = previousItems.isNotEmpty()
 
     fun open(item: VideoItem, expand: Boolean = true) {
-        if (item.mixPlaylistId != null) {
-            openMix(item, expand)
+        val mixId = item.mixPlaylistId
+            ?: if (item.id.startsWith("RD")) item.id
+            else if (item.uploaded?.contains("Infinite playlist", ignoreCase = true) == true || item.title.contains("YouTube Mix", ignoreCase = true)) "RDMM${item.id}"
+            else null
+
+        if (mixId != null) {
+            openMix(item.copy(mixPlaylistId = mixId), expand)
             return
         }
         mixLoadJob?.cancel()
@@ -291,7 +296,8 @@ class PlayerState(private val scope: CoroutineScope) {
 
     /** Loads the actual YouTube radio playlist and replaces, rather than appends to, the old mix queue. */
     fun openMix(mix: VideoItem, expand: Boolean = true) {
-        val playlistId = mix.mixPlaylistId ?: return openVideo(mix, expand)
+        val playlistId = mix.mixPlaylistId
+            ?: if (mix.id.startsWith("RD")) mix.id else "RDMM${mix.id}"
         loadMix(playlistId, mix, expand)
     }
 
@@ -308,22 +314,33 @@ class PlayerState(private val scope: CoroutineScope) {
         clearQueue()
         mixQueueActive = false
         queue = emptyList()
+        // A Mix card already identifies the track the user selected. Start it now;
+        // loading the rest of the Mix is background work and must not delay playback.
+        val immediateStart = seed?.copy(mixPlaylistId = null)
+        if (immediateStart != null) {
+            known[immediateStart.id] = immediateStart
+            openVideo(immediateStart, expand)
+        }
         mixLoadJob = scope.launch {
             runCatching {
-                InnerTube.playlist(playlistId)
+                InnerTube.playlist(playlistId, videoId = seed?.id)
             }.onSuccess { firstPage ->
                 if (generation != mixLoadGeneration) return@onSuccess
                 val items = firstPage.videos.filter { it.mixPlaylistId == null }.distinctBy { it.id }
-                    .ifEmpty { listOfNotNull(seed?.copy(mixPlaylistId = null)) }
                 if (items.isEmpty()) {
-                    actionMessage = "This Mix has no playable tracks."
+                    actionMessage = "Couldn't load this Mix queue."
                     return@onSuccess
                 }
                 val startIndex = items.indexOfFirst { it.id == seed?.id }.takeIf { it >= 0 } ?: 0
                 val ordered = items.drop(startIndex)
                 val start = ordered.first().copy(mixPlaylistId = null)
-                openVideo(start, expand)
+                if (current?.id != start.id) openVideo(start, expand)
                 known[start.id] = start
+
+                val remaining = ordered.drop(1)
+                remaining.forEach { known[it.id] = it }
+                queue = remaining
+                if (queue.isNotEmpty()) mixQueueActive = true
 
                 // The playlist is fetched from YouTube, not generated from related videos.
                 // Add the remaining server order as one replacement queue for this mix.
@@ -349,7 +366,7 @@ class PlayerState(private val scope: CoroutineScope) {
                     rebuildQueue()
                     if (queue.isNotEmpty()) mixQueueActive = true
                 }
-                appendPage(ordered.drop(1))
+                appendPage(remaining)
 
                 // Start with YouTube's first batch, then keep the radio queue ahead of playback.
                 var continuation = firstPage.next
@@ -390,6 +407,40 @@ class PlayerState(private val scope: CoroutineScope) {
     fun shufflePlaylist(items: List<VideoItem>) {
         if (items.isEmpty()) return
         openPlaylist(items.shuffled(), startIndex = 0)
+    }
+
+    /** Shuffles the remaining upcoming queued items. */
+    fun shuffleQueue() {
+        if (queue.isEmpty()) return
+        if (controller == null) return
+        val reordered = queue.shuffled()
+        moveQueueTo(reordered)
+    }
+
+    /** Moves one upcoming item and updates both the visible list and Media3's play order. */
+    fun moveQueueItem(fromIndex: Int, toIndex: Int) {
+        if (fromIndex !in queue.indices || toIndex !in queue.indices || fromIndex == toIndex) return
+        val reordered = queue.toMutableList().apply {
+            add(toIndex, removeAt(fromIndex))
+        }
+        moveQueueTo(reordered)
+    }
+
+    private fun moveQueueTo(reordered: List<VideoItem>) {
+        val player = controller ?: return
+        val currentIndex = player.currentMediaItemIndex
+        if (currentIndex < 0 || currentIndex >= player.mediaItemCount) return
+
+        // Move items in place so playback position and the current item are preserved.
+        val working = queue.toMutableList()
+        reordered.forEachIndexed { target, item ->
+            val from = working.indexOfFirst { it.id == item.id }
+            if (from >= 0 && from != target) {
+                player.moveMediaItem(currentIndex + 1 + from, currentIndex + 1 + target)
+                working.add(target, working.removeAt(from))
+            }
+        }
+        queue = reordered
     }
 
     /**
@@ -473,6 +524,13 @@ class PlayerState(private val scope: CoroutineScope) {
                 .onSuccess { d ->
                     Log.i("FlashTubeTime", "details +${android.os.SystemClock.elapsedRealtime() - openedAt}ms")
                     details = d
+                    ResumeStore.markMusicVideo(item.id, d.isMusicVideo)
+                    if (!d.isMusicVideo && startPlayback && current?.id == item.id) {
+                        val resumeAt = ResumeStore.startPosition(item.id)
+                        if (resumeAt > 0L && (controller?.currentPosition ?: Long.MAX_VALUE) < 2_000L) {
+                            controller?.seekTo(resumeAt)
+                        }
+                    }
                     // The player takes the video's shape before its first frame arrives.
                     if (!aspectFromFrames) d.aspect?.let { videoAspect = it }
                     known[item.id] = d.item
@@ -529,7 +587,8 @@ class PlayerState(private val scope: CoroutineScope) {
     private fun startPlayback(item: VideoItem) {
         val player = controller ?: run { pendingStart = item; return }
         // Pick up where this video was left off (ResumeStore; written by the service).
-        replaceCurrent(player, item, positionMs = ResumeStore.startPosition(item.id))
+        // Apply resume after category metadata arrives so songs always start at zero.
+        replaceCurrent(player, item, positionMs = 0L)
         player.play()
     }
 
@@ -542,17 +601,10 @@ class PlayerState(private val scope: CoroutineScope) {
         if (player.mediaItemCount == 0) {
             player.setMediaItem(mediaItemFor(item), positionMs)
         } else {
-            // The controller reports the transition synchronously inside seekTo; the flag
-            // stops onPlayerMovedTo from trimming while this swap is half done.
             swapping = true
-            try {
-                val index = player.currentMediaItemIndex
-                player.addMediaItem(index + 1, mediaItemFor(item))
-                player.seekTo(index + 1, positionMs)
-                player.removeMediaItem(index)
-            } finally {
-                swapping = false
-            }
+            val index = player.currentMediaItemIndex
+            player.replaceMediaItem(index, mediaItemFor(item))
+            player.seekTo(index, positionMs)
         }
         player.prepare()
     }
@@ -600,6 +652,25 @@ class PlayerState(private val scope: CoroutineScope) {
         replaceCurrent(player, previous, 0L)
         show(previous, startPlayback = false)
         player.play()
+    }
+
+    /** Previous/next buttons navigate between videos; 10-second seeking has dedicated controls. */
+    fun skipToPreviousVideo() {
+        val player = controller ?: return
+        when {
+            player.hasPreviousMediaItem() -> player.seekToPreviousMediaItem()
+            previousItems.isNotEmpty() -> playPreviousMedia()
+            else -> player.seekTo(0L)
+        }
+    }
+
+    fun skipToNextVideo() {
+        val player = controller ?: return
+        if (player.hasNextMediaItem()) {
+            player.seekToNextMediaItem()
+        } else {
+            autoPlayNext()
+        }
     }
 
     private fun rememberPrevious(item: VideoItem?) {
@@ -668,11 +739,11 @@ class PlayerState(private val scope: CoroutineScope) {
     private var swapping = false
 
     private fun onPlayerMovedTo(media: MediaItem) {
-        val player = controller ?: return
-        if (swapping || media.mediaId.isBlank()) return
+        if (controller == null) return
+        val wasSwapping = swapping
+        swapping = false
+        if (wasSwapping || media.mediaId.isBlank()) return
         if (media.mediaId != current?.id) rememberPrevious(current)
-        // Keep the playlist as [current, ...queue]: finished items fall off the front.
-        if (player.currentMediaItemIndex > 0) player.removeMediaItems(0, player.currentMediaItemIndex)
         if (media.mediaId != current?.id) show(itemFor(media), startPlayback = false)
     }
 
@@ -999,6 +1070,16 @@ class PlayerState(private val scope: CoroutineScope) {
             if (playbackState == Player.STATE_ENDED) {
                 val p = controller ?: return
                 if (p.repeatMode == Player.REPEAT_MODE_ONE) return
+
+                val currentPos = p.currentPosition
+                val duration = p.duration
+                val nearEnd = duration > 0L && (duration - currentPos) <= 3_000L
+
+                if (!nearEnd) {
+                    retry()
+                    return
+                }
+
                 if (p.currentMediaItemIndex + 1 < p.mediaItemCount) {
                     p.seekTo(p.currentMediaItemIndex + 1, 0L)
                     p.play()
@@ -1099,9 +1180,10 @@ fun rememberPlayerState(): PlayerState {
             state.controller = null
         }
     }
-    // Position isn't evented; poll it only while something is actually playing.
-    LaunchedEffect(state.isPlaying) {
-        while (isActive && state.isPlaying) {
+    // Position isn't evented. Keep the controller state fresh even before the first
+    // isPlaying event, otherwise a delayed playback-start event can leave progress stale.
+    LaunchedEffect(state.controller) {
+        while (isActive && state.controller != null) {
             state.syncFromPlayer()
             delay(250)
         }

@@ -97,6 +97,8 @@ data class VideoDetails(
     val qualities: List<Int>,
     /** Width / height of the chosen stream, known before the first frame; null if unknown. */
     val aspect: Float? = null,
+    /** YouTube's Music category; songs should not keep a resume position. */
+    val isMusicVideo: Boolean = false,
 )
 
 data class RelatedVideoDetails(
@@ -230,6 +232,7 @@ object YouTube {
             qualities = StreamSelection.heights(info),
             aspect = (if (picked.usesSeparate) picked.video else picked.muxed)
                 ?.takeIf { it.width > 0 && it.height > 0 }?.let { it.width.toFloat() / it.height },
+            isMusicVideo = info.category.equals("Music", ignoreCase = true),
         )
     }
 

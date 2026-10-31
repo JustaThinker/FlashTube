@@ -500,7 +500,7 @@ fun VideoContent(
 
         val enabled = controlsVisible && interactive
         // With the controls hidden, loading still shows: a small spinner in the middle.
-        if (!scrubbing && !controlsVisible && (state.isBuffering || (state.loading && state.details == null))) {
+        if (!scrubbing && !controlsVisible && !state.isPlaying && (state.isBuffering || (state.loading && state.details == null))) {
             CircularProgressIndicator(color = Color.White, strokeWidth = 3.dp, modifier = Modifier.align(Alignment.Center).size(36.dp))
         }
         if (!scrubbing) {
@@ -599,12 +599,7 @@ fun VideoContent(
                         iconSize = iconSize,
                     ) {
                         touched()
-                        val c = state.controller
-                        if (c != null && c.hasPreviousMediaItem()) {
-                            c.seekToPreviousMediaItem()
-                        } else {
-                            state.seekBy(-10_000)
-                        }
+                        state.skipToPreviousVideo()
                     }
 
                     // Center Play / Pause (Clean unboxed icon)
@@ -629,12 +624,7 @@ fun VideoContent(
                         iconSize = iconSize,
                     ) {
                         touched()
-                        val c = state.controller
-                        if (c != null && c.hasNextMediaItem()) {
-                            c.seekToNextMediaItem()
-                        } else {
-                            state.seekBy(SeekConfig.stepMs)
-                        }
+                        state.skipToNextVideo()
                     }
                 }
                 Column(
@@ -1166,10 +1156,13 @@ fun PlayerSettingsSheet(state: PlayerState, onDismiss: () -> Unit) {
                             )
                         }
                     } else {
-                        val tracks = audioStreams.distinctBy { it.audioTrackName ?: it.audioTrackType?.name ?: "Default" }
+                        val tracks = audioStreams
+                            .distinctBy { it.audioTrackName ?: it.audioTrackType?.name ?: "Default" }
+                            .sortedBy { if (it.audioTrackType == org.schabi.newpipe.extractor.stream.AudioTrackType.ORIGINAL) 0 else 1 }
                         tracks.forEach { audio ->
                             val trackName = audio.audioTrackName ?: audio.audioTrackType?.name ?: "Default"
-                            val isSelected = state.selectedAudioLanguage == trackName || (state.selectedAudioLanguage == null && tracks.indexOf(audio) == 0)
+                            val displayName = if (audio.audioTrackType == org.schabi.newpipe.extractor.stream.AudioTrackType.ORIGINAL) "Original ($trackName)" else trackName
+                            val isSelected = state.selectedAudioLanguage == trackName || (state.selectedAudioLanguage == null && audio.audioTrackType == org.schabi.newpipe.extractor.stream.AudioTrackType.ORIGINAL) || (state.selectedAudioLanguage == null && tracks.none { it.audioTrackType == org.schabi.newpipe.extractor.stream.AudioTrackType.ORIGINAL } && tracks.indexOf(audio) == 0)
 
                             Row(
                                 modifier = Modifier
@@ -1182,7 +1175,7 @@ fun PlayerSettingsSheet(state: PlayerState, onDismiss: () -> Unit) {
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(
-                                    text = trackName,
+                                    text = displayName,
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                                     fontSize = 15.sp,
                                     color = if (isSelected) c.primary else c.onSurface,

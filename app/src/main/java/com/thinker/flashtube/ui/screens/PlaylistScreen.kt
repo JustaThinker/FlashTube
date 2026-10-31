@@ -94,30 +94,13 @@ fun PlaylistScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 val heroThumb = playlist.thumbnail ?: videos.firstOrNull()?.thumbnail
-                                if (heroThumb != null) {
-                                    AsyncImage(
-                                        model = heroThumb,
-                                        contentDescription = playlist.title,
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier
-                                            .size(width = 120.dp, height = 70.dp)
-                                            .clip(RoundedCornerShape(12.dp)),
+                                Box(Modifier.width(130.dp)) {
+                                    StackedPlaylistThumbnail(
+                                        thumbnailUrl = heroThumb,
+                                        radius = 10,
+                                        badgeText = "${videos.size} videos",
+                                        badgeIcon = Icons.AutoMirrored.Rounded.PlaylistPlay,
                                     )
-                                } else {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(width = 120.dp, height = 70.dp)
-                                            .clip(RoundedCornerShape(12.dp))
-                                            .background(c.surfaceContainerHigh),
-                                        contentAlignment = Alignment.Center,
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.AutoMirrored.Rounded.PlaylistPlay,
-                                            contentDescription = null,
-                                            tint = c.primary,
-                                            modifier = Modifier.size(32.dp),
-                                        )
-                                    }
                                 }
 
                                 Spacer(Modifier.width(16.dp))

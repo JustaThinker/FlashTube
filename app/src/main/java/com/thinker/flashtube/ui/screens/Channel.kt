@@ -383,45 +383,13 @@ fun ChannelPlaylistCard(
             .padding(horizontal = 16.dp, vertical = 8.dp)
             .pressable(onClick = onClick),
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(16f / 9f)
-                .clip(RoundedCornerShape(12.dp)),
-        ) {
-            AsyncImage(
-                model = item.thumbnail,
-                contentDescription = item.title,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
-            )
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(8.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color.Black.copy(alpha = 0.8f))
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Rounded.PlaylistPlay,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(16.dp),
-                    )
-                    Text(
-                        text = item.uploaded ?: "Playlist",
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 11.5.sp,
-                    )
-                }
-            }
-        }
+        StackedPlaylistThumbnail(
+            thumbnailUrl = item.thumbnail,
+            radius = 12,
+            badgeText = item.uploaded ?: "Playlist",
+            badgeIcon = Icons.AutoMirrored.Rounded.PlaylistPlay,
+            videoId = item.id,
+        )
         Spacer(Modifier.height(8.dp))
         Text(
             text = item.title,

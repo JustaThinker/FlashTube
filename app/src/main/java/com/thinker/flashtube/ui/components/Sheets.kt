@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -27,16 +28,27 @@ import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.outlined.ClosedCaption
 import androidx.compose.material.icons.outlined.ClosedCaptionDisabled
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.material.icons.rounded.ClosedCaption
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.DragHandle
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.HighQuality
+import androidx.compose.material.icons.rounded.KeyboardArrowUp
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Repeat
+import androidx.compose.material.icons.rounded.RepeatOne
 import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.WatchLater
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
@@ -71,6 +83,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -181,30 +194,84 @@ fun QueueCard(player: PlayerState, onOpen: () -> Unit) {
     }
 }
 
-/** Compact floating upcoming-mix control; ordinary video queues never surface this pill. */
+/** Animated 3-bar equalizer playing indicator for active queue track (Morph YouTube style). */
+@Composable
+fun EqualizerIndicator(modifier: Modifier = Modifier, color: Color = MaterialTheme.colorScheme.primary) {
+    val infiniteTransition = rememberInfiniteTransition(label = "eq")
+    val height1 by infiniteTransition.animateFloat(
+        initialValue = 0.25f, targetValue = 0.95f,
+        animationSpec = infiniteRepeatable(tween(400, easing = LinearEasing), repeatMode = androidx.compose.animation.core.RepeatMode.Reverse),
+        label = "h1",
+    )
+    val height2 by infiniteTransition.animateFloat(
+        initialValue = 0.85f, targetValue = 0.3f,
+        animationSpec = infiniteRepeatable(tween(550, easing = LinearEasing), repeatMode = androidx.compose.animation.core.RepeatMode.Reverse),
+        label = "h2",
+    )
+    val height3 by infiniteTransition.animateFloat(
+        initialValue = 0.4f, targetValue = 1.0f,
+        animationSpec = infiniteRepeatable(tween(350, easing = LinearEasing), repeatMode = androidx.compose.animation.core.RepeatMode.Reverse),
+        label = "h3",
+    )
+
+    Row(
+        modifier = modifier.size(width = 16.dp, height = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.Bottom,
+    ) {
+        Box(Modifier.weight(1f).fillMaxHeight(height1).background(color, RoundedCornerShape(1.dp)))
+        Box(Modifier.weight(1f).fillMaxHeight(height2).background(color, RoundedCornerShape(1.dp)))
+        Box(Modifier.weight(1f).fillMaxHeight(height3).background(color, RoundedCornerShape(1.dp)))
+    }
+}
+
+/** Compact floating upcoming-mix control; ordinary video queues never surface this pill (Morph YouTube style). */
 @Composable
 fun QueuePill(player: PlayerState, onOpen: () -> Unit, modifier: Modifier = Modifier) {
     if (!player.mixQueueActive) return
-    val next = player.queue.firstOrNull() ?: return
+    val next = player.queue.firstOrNull() ?: player.current ?: return
     val c = MaterialTheme.colorScheme
     Row(
-        modifier
-            .widthIn(min = 176.dp, max = 292.dp)
+        modifier = modifier
+            .widthIn(min = 180.dp, max = 300.dp)
             .height(48.dp)
-            .shadow(8.dp, CircleShape)
+            .shadow(10.dp, CircleShape)
             .clip(CircleShape)
             .background(c.inverseSurface)
-            .pressable(pressedScale = 0.97f, onClick = onOpen)
+            .pressable(pressedScale = 0.96f, onClick = onOpen)
             .padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(9.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Icon(Icons.AutoMirrored.Rounded.QueueMusic, null, tint = c.inverseOnSurface, modifier = Modifier.size(18.dp))
+        Icon(
+            imageVector = Icons.AutoMirrored.Rounded.QueueMusic,
+            contentDescription = null,
+            tint = c.inverseOnSurface,
+            modifier = Modifier.size(20.dp),
+        )
         Column(Modifier.weight(1f)) {
-            Text("Mix · ${player.queue.size} up next", color = c.inverseOnSurface.copy(alpha = 0.72f), fontSize = 10.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-            Text(next.title, color = c.inverseOnSurface, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                text = "Mix · ${player.queue.size} up next",
+                color = c.inverseOnSurface.copy(alpha = 0.75f),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+            )
+            Text(
+                text = next.title,
+                color = c.inverseOnSurface,
+                fontSize = 12.5.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
-        Icon(Icons.Rounded.PlayArrow, null, tint = c.inverseOnSurface, modifier = Modifier.size(18.dp))
+        Icon(
+            imageVector = Icons.Rounded.KeyboardArrowUp,
+            contentDescription = "Expand Queue",
+            tint = c.inverseOnSurface,
+            modifier = Modifier.size(22.dp),
+        )
     }
 }
 
@@ -212,36 +279,311 @@ fun QueuePill(player: PlayerState, onOpen: () -> Unit, modifier: Modifier = Modi
 @Composable
 fun QueueSheet(player: PlayerState, onDismiss: () -> Unit) {
     val c = MaterialTheme.colorScheme
-    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = c.surfaceContainerLow) {
-        Row(Modifier.padding(horizontal = 20.dp).padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("Queue", fontFamily = RoundedHeavy, fontWeight = FontWeight.ExtraBold, fontSize = 21.sp, modifier = Modifier.weight(1f))
-            if (player.queue.isNotEmpty()) {
-                Text(
-                    "Clear", color = c.primary, fontWeight = FontWeight.ExtraBold, fontSize = 14.sp,
-                    modifier = Modifier.pressable { player.clearQueue() }.padding(8.dp),
-                )
-            }
-        }
-        if (player.queue.isEmpty()) {
-            Text(
-                "Nothing queued. Press and hold a video to add it.",
-                color = c.onSurfaceVariant, fontSize = 14.sp,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 24.dp),
+    val menu = LocalVideoMenu.current
+    val rowDragStepPx = with(androidx.compose.ui.platform.LocalDensity.current) { 88.dp.toPx() }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = c.surfaceContainerLow,
+        dragHandle = {
+            Box(
+                Modifier
+                    .padding(vertical = 10.dp)
+                    .width(36.dp)
+                    .height(4.dp)
+                    .clip(CircleShape)
+                    .background(c.onSurfaceVariant.copy(alpha = 0.4f)),
             )
-        } else {
-            LazyColumn(Modifier.fillMaxHeight(0.7f)) {
-                itemsIndexed(player.queue, key = { i, v -> "$i-${v.id}" }) { index, video ->
-                    Box(Modifier.padding(horizontal = 20.dp)) {
-                        VideoRow(video, onClick = { player.playFromQueue(index); onDismiss() }) {
-                            Box(Modifier.size(40.dp).pressable { player.removeFromQueue(index) }, contentAlignment = Alignment.Center) {
-                                Icon(Icons.Rounded.Close, "Remove from queue", tint = c.onSurfaceVariant)
+        },
+    ) {
+        Column(Modifier.fillMaxWidth()) {
+            // Header
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    val headerTitle = when {
+                        player.mixQueueActive && player.current != null -> {
+                            val t = player.current!!.title
+                            if (t.startsWith("Mix", ignoreCase = true)) t else "Mix – $t"
+                        }
+                        else -> "Queue"
+                    }
+                    val headerSub = if (player.mixQueueActive) {
+                        "Mixes are playlists that YouTube makes for you"
+                    } else {
+                        "${player.queue.size} videos up next"
+                    }
+                    Text(
+                        text = headerTitle,
+                        fontFamily = RoundedHeavy,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp,
+                        color = c.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = headerSub,
+                        color = c.onSurfaceVariant,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Normal,
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(c.surfaceContainerHigh)
+                        .pressable(onClick = onDismiss),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Close,
+                        contentDescription = "Close",
+                        tint = c.onSurface,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+            }
+
+            // Sub-Header Controls Row: Repeat | Shuffle | Clear
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                val loopActive = player.loopEnabled
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(CircleShape)
+                        .background(if (loopActive) c.primaryContainer else c.surfaceContainerHigh)
+                        .pressable { player.toggleLoop() },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = if (loopActive) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
+                        contentDescription = "Repeat",
+                        tint = if (loopActive) c.onPrimaryContainer else c.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(CircleShape)
+                        .background(c.surfaceContainerHigh)
+                        .pressable {
+                            player.shuffleQueue()
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Shuffle,
+                        contentDescription = "Shuffle",
+                        tint = c.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+                Spacer(Modifier.weight(1f))
+                if (player.queue.isNotEmpty()) {
+                    Text(
+                        text = "Clear queue",
+                        color = c.primary,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        modifier = Modifier
+                            .pressable { player.clearQueue() }
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                    )
+                }
+            }
+
+            HorizontalDivider(
+                modifier = Modifier.padding(vertical = 4.dp),
+                color = c.outlineVariant.copy(alpha = 0.5f),
+            )
+
+            // Queue List
+            if (player.current == null && player.queue.isEmpty()) {
+                Text(
+                    text = "Nothing queued. Press and hold a video to add it.",
+                    color = c.onSurfaceVariant,
+                    fontSize = 14.sp,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 24.dp),
+                )
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxHeight(0.72f),
+                ) {
+                    // Currently Playing Track
+                    player.current?.let { currentVideo ->
+                        item(key = "current_playing_item") {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(c.primaryContainer.copy(alpha = 0.18f))
+                                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    EqualizerIndicator(
+                                        modifier = Modifier.padding(end = 10.dp),
+                                        color = c.primary,
+                                    )
+                                    Box(Modifier.width(110.dp)) {
+                                        Thumbnail(
+                                            url = currentVideo.thumbnail,
+                                            modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
+                                            radius = 8,
+                                            videoId = currentVideo.id,
+                                        )
+                                    }
+                                    Spacer(Modifier.width(12.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Text(
+                                            text = currentVideo.title,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 14.sp,
+                                            lineHeight = 18.sp,
+                                            color = c.onSurface,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        Spacer(Modifier.height(3.dp))
+                                        Text(
+                                            text = currentVideo.channel,
+                                            color = c.onSurfaceVariant,
+                                            fontSize = 12.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .size(36.dp)
+                                            .pressable { menu(currentVideo) },
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.MoreVert,
+                                            contentDescription = "Options",
+                                            tint = c.onSurfaceVariant,
+                                            modifier = Modifier.size(20.dp),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Upcoming items
+                    itemsIndexed(player.queue, key = { i, v -> "$i-${v.id}" }) { index, video ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .pressable(pressedScale = 0.98f, onClick = {
+                                    player.playFromQueue(index)
+                                    onDismiss()
+                                })
+                                .padding(horizontal = 16.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.DragHandle,
+                                contentDescription = "Drag handle",
+                                tint = c.onSurfaceVariant.copy(alpha = 0.5f),
+                                modifier = Modifier
+                                    .size(20.dp)
+                                    .padding(end = 4.dp)
+                                    .pointerInput(video.id) {
+                                        var activeIndex = index
+                                        var dragDistance = 0f
+                                        detectDragGesturesAfterLongPress(
+                                            onDragStart = {
+                                                activeIndex = index
+                                                dragDistance = 0f
+                                            },
+                                        ) { change, dragAmount ->
+                                            change.consume()
+                                            dragDistance += dragAmount.y
+                                            while (dragDistance >= rowDragStepPx && activeIndex < player.queue.lastIndex) {
+                                                player.moveQueueItem(activeIndex, activeIndex + 1)
+                                                activeIndex++
+                                                dragDistance -= rowDragStepPx
+                                            }
+                                            while (dragDistance <= -rowDragStepPx && activeIndex > 0) {
+                                                player.moveQueueItem(activeIndex, activeIndex - 1)
+                                                activeIndex--
+                                                dragDistance += rowDragStepPx
+                                            }
+                                        }
+                                    },
+                            )
+                            Box(Modifier.width(110.dp)) {
+                                Thumbnail(
+                                    url = video.thumbnail,
+                                    modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
+                                    radius = 8,
+                                    videoId = video.id,
+                                )
+                                DurationPill(
+                                    seconds = video.durationSec,
+                                    modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp),
+                                    small = true,
+                                )
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    text = video.title,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 13.5.sp,
+                                    lineHeight = 18.sp,
+                                    color = c.onSurface,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Spacer(Modifier.height(3.dp))
+                                Text(
+                                    text = listOfNotNull(
+                                        video.channel.ifBlank { null },
+                                        video.views.takeIf { it >= 0 }?.let { "${formatCount(it)} views" },
+                                    ).joinToString(" · "),
+                                    color = c.onSurfaceVariant,
+                                    fontSize = 11.5.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .pressable { player.removeFromQueue(index) },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Close,
+                                    contentDescription = "Remove",
+                                    tint = c.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp),
+                                )
                             }
                         }
                     }
                 }
             }
+            Spacer(Modifier.height(20.dp))
         }
-        Spacer(Modifier.height(24.dp))
     }
 }
 

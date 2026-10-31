@@ -120,7 +120,7 @@ class PlaybackService : MediaSessionService() {
         player.addListener(SponsorSkipper(player))
         player.addListener(SpeedKeeper(player))
         // Before the session's own listener: the UI must see the recovery when the error reaches it.
-        player.addListener(StreamRecoverer(player, sources, resolver))
+        player.addListener(StreamRecoverer(player, resolver))
         resumeSaver = ResumeSaver(player).also(player::addListener)
         watchTime = WatchTimeReporter(player).also(player::addListener)
         session = MediaSession.Builder(this, player)
@@ -211,7 +211,6 @@ object StreamRecovery {
 @OptIn(UnstableApi::class)
 private class StreamRecoverer(
     private val player: ExoPlayer,
-    private val sources: MediaSource.Factory,
     private val resolver: java.util.concurrent.Executor,
 ) : Player.Listener {
     private val main = Handler(Looper.getMainLooper())
@@ -251,13 +250,11 @@ private class StreamRecoverer(
     }
 
     /**
-     * A fresh source for the same item: added behind the refused one, which is then dropped
-     * so the new one takes its index (no transient jump the UI's queue trimming could see).
+     * Replaces the stream source for the current item in-place and resumes at the saved position.
      */
     private fun resume(item: MediaItem, positionMs: Long) {
         val index = player.currentMediaItemIndex
-        player.addMediaSource(index + 1, sources.createMediaSource(item))
-        player.removeMediaItem(index)
+        player.replaceMediaItem(index, item)
         player.seekTo(index, positionMs)
         player.prepare()
     }

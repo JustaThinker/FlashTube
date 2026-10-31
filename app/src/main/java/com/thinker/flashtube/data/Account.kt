@@ -25,7 +25,9 @@ data class Profile(val name: String, val handle: String?, val avatar: String?)
 
 @Immutable
 data class PlaylistRef(val id: String, val title: String, val thumbnail: String?, val subtitle: String?, val count: Int = 0) {
-    val isMix get() = id.startsWith("RD") || id.startsWith("FEplaylist_") || title.contains("Mix", ignoreCase = true)
+    // RD* is YouTube's radio/mix playlist namespace. FEplaylist_* is a browse route,
+    // not a radio playlist ID, and treating it as a Mix opens ordinary playlists wrong.
+    val isMix get() = id.startsWith("RD")
 }
 
 @Immutable
@@ -605,13 +607,32 @@ object InnerTube {
     suspend fun subscriptionsFeed(next: String? = null) = browse("FEsubscriptions", next)
     suspend fun history(next: String? = null) = browse("FEhistory", next)
 
-    suspend fun playlist(id: String, next: String? = null): FeedPage = withContext(Dispatchers.IO) {
-        // YouTube serves radio mixes inconsistently: some responses accept RD… directly,
-        // while others require the playlist browse prefix used by ordinary playlists.
-        if (id.startsWith("RD") && next == null) {
+    suspend fun playlist(id: String, next: String? = null, videoId: String? = null): FeedPage = withContext(Dispatchers.IO) {
+        if (id.startsWith("RD")) {
+            val body = JSONObject().put("playlistId", id)
+            if (videoId != null) body.put("videoId", videoId)
+            if (next != null) body.put("continuation", next)
+            val root = runCatching { postAny("next", body) }.getOrNull()
+            val nextPage = root?.let(::parseFeed)
+
+            // A seeded Mix `next` response can contain only its selected video while the
+            // playlist browse response contains the actual generated radio tracks. Prefer
+            // the fuller initial page so Mix taps do not degrade into one-video playback.
+            if (next != null) {
+                if (!nextPage?.videos.isNullOrEmpty()) return@withContext nextPage!!
+                return@withContext browse("VL$id", next)
+            }
+            if (nextPage != null && nextPage.videos.size > 1) return@withContext nextPage
+
             val prefixed = runCatching { browse("VL$id") }.getOrNull()
-            if (!prefixed?.videos.isNullOrEmpty()) return@withContext prefixed!!
-            return@withContext browse(id)
+            val direct = if (prefixed?.videos.orEmpty().size > 1) null
+                else runCatching { browse(id) }.getOrNull()
+            return@withContext listOfNotNull(nextPage, prefixed, direct)
+                .maxByOrNull { it.videos.size }
+                ?: nextPage
+                ?: FeedPage(emptyList(), null)
+                ?: prefixed
+                ?: browse(id)
         }
         val browseId = when {
             id.startsWith("VL") || id.startsWith("FE") || id.startsWith("DL") || id.startsWith("RD") -> id
@@ -912,7 +933,7 @@ object InnerTube {
                 }
                 // Members-only videos can't be played (anonymous extraction), and full movies/TV
                 // aren't wanted (Derek), so neither is ever shown.
-                "videoRenderer", "gridVideoRenderer", "compactVideoRenderer", "playlistVideoRenderer" ->
+                "videoRenderer", "gridVideoRenderer", "compactVideoRenderer", "playlistVideoRenderer", "playlistPanelVideoRenderer" ->
                     if (!isMembersOnly(obj) && !isMovie(obj)) parseVideoRenderer(obj)?.let { videos.putIfAbsent(it.id, it) }
                 "radioRenderer", "compactRadioRenderer", "playlistRadioRenderer", "mixRenderer" ->
                     parseRadioRenderer(obj)?.let { mix ->

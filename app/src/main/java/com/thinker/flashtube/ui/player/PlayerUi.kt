@@ -394,6 +394,9 @@ fun PlayerScreen(
                                 }
                             }
                             PlayerActions(state)
+                            if (state.mixQueueActive || state.queue.isNotEmpty()) {
+                                QueueCard(state, onOpen = { state.sheet = PlayerSheet.Queue })
+                            }
                             CommentsCard(state.comments, onOpen = { state.sheet = PlayerSheet.Comments })
                         }
                     }
@@ -422,7 +425,7 @@ fun PlayerScreen(
             }
             }
         }
-        if (interactive && state.mixQueueActive && state.queue.isNotEmpty() && state.sheet == null) {
+        if (interactive && (state.mixQueueActive || state.queue.isNotEmpty()) && state.sheet == null) {
             QueuePill(
                 state,
                 onOpen = { state.sheet = PlayerSheet.Queue },

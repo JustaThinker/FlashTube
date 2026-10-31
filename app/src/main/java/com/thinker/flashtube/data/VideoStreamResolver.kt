@@ -25,7 +25,10 @@ data class ResolvedStreamVariant(
     val bitrate: Long,
     val isHls: Boolean = false,
     val isHdr: Boolean = false,
-    val loudnessDb: Float? = null
+    val loudnessDb: Float? = null,
+    /** YouTube marks the creator's soundtrack as default even when a dub has a higher bitrate. */
+    val isOriginalAudio: Boolean = false,
+    val audioTrackName: String? = null,
 )
 
 data class ResolvedStreamLadder(
@@ -163,7 +166,10 @@ object VideoStreamResolver {
                 ?: videoStreams.first()
         }
 
-        val bestAudio = audioStreams.maxByOrNull { it.bitrate } ?: audioStreams.firstOrNull()
+        val bestAudio = audioStreams
+            .filter { it.isOriginalAudio }
+            .maxByOrNull { it.bitrate }
+            ?: audioStreams.maxByOrNull { it.bitrate }
 
         return PickedStreams(
             video = bestVideo,
@@ -289,6 +295,9 @@ object VideoStreamResolver {
         val bitrate = format.optLong("bitrate", 0L)
         val itag = format.optInt("itag", 0)
         val isHdr = itag in 330..337 || mimeType.contains("vp9.2", ignoreCase = true)
+        val audioTrack = format.optJSONObject("audioTrack")
+        val isOriginalAudio = audioTrack?.optBoolean("audioIsDefault", false) == true
+        val audioTrackName = audioTrack?.optString("displayName")?.takeIf { it.isNotBlank() }
 
         val loudnessDb = format.optDouble("loudnessDb", Double.NaN).let {
             if (it.isNaN()) null else it.toFloat()
@@ -304,7 +313,9 @@ object VideoStreamResolver {
             bitrate = bitrate,
             isHls = false,
             isHdr = isHdr,
-            loudnessDb = loudnessDb
+            loudnessDb = loudnessDb,
+            isOriginalAudio = isOriginalAudio,
+            audioTrackName = audioTrackName,
         )
 
         if (mimeType.startsWith("video/")) {
@@ -376,7 +387,9 @@ object VideoStreamResolver {
                 width = 0,
                 fps = 0,
                 bitrate = it.bitrate.toLong(),
-                isHls = false
+                isHls = false,
+                isOriginalAudio = it.audioTrackType == org.schabi.newpipe.extractor.stream.AudioTrackType.ORIGINAL,
+                audioTrackName = it.audioTrackName
             )
         }
 

@@ -28,6 +28,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.FastForward
 import androidx.compose.material.icons.rounded.MoreVert
@@ -40,7 +41,11 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -87,14 +92,14 @@ import kotlin.math.sin
 fun Modifier.shimmer(
     shape: Shape = RoundedCornerShape(10.dp),
     backgroundColor: Color = MaterialTheme.colorScheme.surfaceContainerHigh,
-    shimmerColor: Color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+    shimmerColor: Color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f),
 ): Modifier {
     val transition = rememberInfiniteTransition(label = "shimmer")
     val translateAnim by transition.animateFloat(
         initialValue = 0f,
         targetValue = 1000f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1200, easing = LinearEasing),
+            animation = tween(durationMillis = 1900, easing = LinearEasing),
             repeatMode = RepeatMode.Restart,
         ),
         label = "shimmerTranslate",
@@ -643,9 +648,89 @@ private fun SingleCollabAvatarCircle(
     }
 }
 
+/** 3-Layer stacked thumbnail effect for YouTube Mixes and Playlists (Morph YouTube style). */
+@Composable
+fun StackedPlaylistThumbnail(
+    thumbnailUrl: String?,
+    modifier: Modifier = Modifier,
+    radius: Int = 12,
+    badgeText: String = "Mix",
+    badgeIcon: androidx.compose.ui.graphics.vector.ImageVector = Icons.AutoMirrored.Rounded.QueueMusic,
+    videoId: String? = null,
+) {
+    val c = MaterialTheme.colorScheme
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        // Stack Layer 1 (topmost, narrowest backing card edge)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(0.86f)
+                .height(5.dp)
+                .clip(RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp))
+                .background(c.onSurface.copy(alpha = 0.12f)),
+        )
+        Spacer(Modifier.height(2.dp))
+        // Stack Layer 2 (middle backing card edge)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(0.93f)
+                .height(5.dp)
+                .clip(RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp))
+                .background(c.onSurface.copy(alpha = 0.22f)),
+        )
+        Spacer(Modifier.height(2.dp))
+        // Main Front Thumbnail
+        Box(Modifier.fillMaxWidth()) {
+            Thumbnail(
+                url = thumbnailUrl,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(16f / 9f),
+                radius = radius,
+                videoId = videoId,
+            )
+            // Bottom-Right Mix / Playlist Badge (matches DurationPill / LIVE tag exactly)
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(6.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(Color.Black.copy(alpha = 0.72f))
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                    Icon(
+                        imageVector = badgeIcon,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(12.dp),
+                    )
+                    Text(
+                        text = badgeText,
+                        color = Color.White,
+                        fontSize = 11.5.sp,
+                        lineHeight = 11.5.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+        }
+    }
+}
+
 /** Full-width feed row: edge-to-edge thumbnail, then avatar + title + meta + 3-dots menu. */
 @Composable
 fun VideoCard(video: VideoItem, onClick: () -> Unit, modifier: Modifier = Modifier, radius: Int = 0) {
+    if (video.mixPlaylistId != null) {
+        MixCard(video, onClick = onClick, modifier = modifier)
+        return
+    }
+
     val c = MaterialTheme.colorScheme
     val menu = LocalVideoMenu.current
     val openChannel = LocalChannelOpener.current
@@ -677,16 +762,6 @@ fun VideoCard(video: VideoItem, onClick: () -> Unit, modifier: Modifier = Modifi
                 radius = radius,
                 videoId = video.id,
             )
-            if (video.mixPlaylistId != null) {
-                Box(
-                    Modifier.align(Alignment.TopStart).padding(8.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(Color.Black.copy(alpha = 0.72f))
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                ) {
-                    Text("MIX", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 0.7.sp)
-                }
-            }
             DurationPill(video.durationSec, Modifier.align(Alignment.BottomEnd).padding(8.dp))
             ResumeBar(video.id, Modifier.align(Alignment.BottomStart))
         }
@@ -745,36 +820,131 @@ fun VideoCard(video: VideoItem, onClick: () -> Unit, modifier: Modifier = Modifi
     }
 }
 
-/** YouTube radio card: identifies the Mix as a playable queue instead of a single video. */
+/** YouTube radio card: identifies the Mix as a playable queue instead of a single video (Morph YouTube style). */
 @Composable
-fun MixCard(video: VideoItem, onClick: () -> Unit) {
+fun MixCard(
+    video: VideoItem,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    onChannelClick: (() -> Unit)? = null,
+) {
     val c = MaterialTheme.colorScheme
+    val menu = LocalVideoMenu.current
+    val openChannel = LocalChannelOpener.current
+    val openCollabSheet = LocalCollaboratorsOpener.current
+
+    // FeedState enriches Mix metadata before publishing a page, so the card uses the
+    // same already-loaded data as regular video cards.
+    val metadataItem = video
+    val collabChannels = metadataItem.collabChannels.takeIf { it.size >= 2 } ?: emptyList()
+    val rawChannel = formatCollabNames(collabChannels, defaultName = metadataItem.channel)
+    val showChannel = rawChannel.isNotBlank() &&
+        !rawChannel.contains("YouTube Mix", ignoreCase = true) &&
+        !rawChannel.equals("YouTube", ignoreCase = true) &&
+        !rawChannel.contains("YouTube playlist", ignoreCase = true)
+    val displayChannel = rawChannel.takeIf { showChannel }.orEmpty()
+    val channelUrl = if (!showChannel) null else if (collabChannels.isNotEmpty()) collabChannels.first().url else video.channelUrl
+
+    val handleChannelClick: () -> Unit = {
+        if (onChannelClick != null) {
+            onChannelClick()
+        } else if (collabChannels.size >= 2) {
+            openCollabSheet(collabChannels)
+        } else {
+            channelUrl?.let(openChannel)
+        }
+    }
+
+    val rawTitle = video.title.trim()
+    val titleWithoutPrefix = rawTitle
+        .removePrefix("Mix –")
+        .removePrefix("Mix -")
+        .removePrefix("Mix:")
+        .trim()
+    val genericMixTitle = titleWithoutPrefix.isBlank() ||
+        titleWithoutPrefix.equals("Mix", ignoreCase = true) ||
+        titleWithoutPrefix.equals("YouTube Mix", ignoreCase = true) ||
+        titleWithoutPrefix.equals("YouTube playlist", ignoreCase = true) ||
+        titleWithoutPrefix.equals("Mix playlist", ignoreCase = true)
+    val mixTitle = when {
+        !genericMixTitle -> "Mix – $titleWithoutPrefix"
+        showChannel -> "Mix – $displayChannel"
+        else -> "Mix"
+    }
+    val subtitle = displayChannel
+    val showSubtitle = showChannel && subtitle.isNotBlank() && !subtitle.equals(mixTitle, ignoreCase = true)
+
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .prefetchOnPress(video.id)
-            .pressable(pressedScale = 0.98f, onClick = onClick)
+            .pressable(pressedScale = 0.98f, onLongClick = { menu(video) }, onClick = onClick)
             .padding(bottom = 16.dp),
     ) {
-        Box(Modifier.fillMaxWidth()) {
-            Thumbnail(video.thumbnail, Modifier.fillMaxWidth().aspectRatio(16f / 9f), radius = 0, videoId = video.id)
-            Box(
-                Modifier.align(Alignment.BottomEnd).padding(8.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color.Black.copy(alpha = 0.82f))
-                    .padding(horizontal = 10.dp, vertical = 7.dp),
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                    Icon(Icons.AutoMirrored.Rounded.QueueMusic, contentDescription = null, tint = Color.White, modifier = Modifier.size(17.dp))
-                    Text("Mix", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        // Morph YouTube 3-layer stacked thumbnail
+        Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+            StackedPlaylistThumbnail(
+                thumbnailUrl = video.thumbnail,
+                radius = 12,
+                badgeText = "Mix",
+                badgeIcon = Icons.AutoMirrored.Rounded.QueueMusic,
+                videoId = video.id,
+            )
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 12.dp, end = 4.dp, top = 10.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            if (showChannel) {
+                Box(Modifier.pressable(enabled = channelUrl != null || collabChannels.size >= 2 || onChannelClick != null, onClick = handleChannelClick)) {
+                    ChannelAvatar(
+                        url = metadataItem.feedAvatar(),
+                        name = displayChannel,
+                        size = 36,
+                        collabChannels = collabChannels,
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+            }
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = mixTitle,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp,
+                    lineHeight = 20.sp,
+                    letterSpacing = (-0.2).sp,
+                    color = c.onSurface,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (showSubtitle) {
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        text = subtitle,
+                        color = c.onSurfaceVariant.copy(alpha = 0.85f),
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.pressable(enabled = showChannel && (channelUrl != null || collabChannels.size >= 2 || onChannelClick != null), onClick = handleChannelClick),
+                    )
                 }
             }
-            ResumeBar(video.id, Modifier.align(Alignment.BottomStart))
-        }
-        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp)) {
-            Text(video.title, color = c.onSurface, fontSize = 16.sp, lineHeight = 21.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Spacer(Modifier.height(4.dp))
-            Text("Mix · ${video.channel}", color = c.onSurfaceVariant, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .pressable(onClick = { menu(video) }),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Rounded.MoreVert,
+                    contentDescription = "Options",
+                    tint = c.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
         }
     }
 }
